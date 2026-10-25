@@ -69,10 +69,16 @@ Si tes fichiers ne sont pas aux emplacements par défaut :
 
 ### 3. Enregistrement MCP pour Claude / Agents IA
 
-Ajouter le serveur MCP avec :
+Enregistrement automatique en une commande :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tas\control\mcp\register_mcp.ps1
+```
+
+Ou manuellement via Claude CLI :
 
 ```bash
-claude mcp add sm64 -- powershell -NoProfile -ExecutionPolicy Bypass -File "D:\mupen\sm64-mupen-bridge\tas\control\mcp\sm64_mcp_server.ps1"
+claude mcp add sm64 -- powershell -NoProfile -ExecutionPolicy Bypass -File "<chemin_du_depot>\tas\control\mcp\sm64_mcp_server.ps1"
 ```
 
 Outils exposés : `start_mupen`, `stop_mupen`, `get_state`, `step_frames`, `read_mem`, `write_mem`, `save_memstate`, `load_memstate`, `stroop_vars`, `invoke_action`, `screenshot`.

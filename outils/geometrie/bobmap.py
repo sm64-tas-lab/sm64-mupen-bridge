@@ -1,8 +1,12 @@
+import tempfile
+import os
+from sm64_geo_common import get_decomp_dir
+DECOMP = get_decomp_dir()
 import re,math
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
-src=open(r"G:/tas-lab/repos/sm64-decomp/levels/bob/areas/1/collision.inc.c").read()
+src=open(os.path.join(DECOMP, "levels/bob/areas/1/collision.inc.c")).read()
 V=[tuple(map(int,m)) for m in re.findall(r"COL_VERTEX\((-?\d+),\s*(-?\d+),\s*(-?\d+)\)",src)]
 tris=[];cur=None
 for line in src.splitlines():
@@ -28,4 +32,4 @@ for (x,z) in [(-3080,-5200),(-1750,-2800),(-1400,-950),(-2650,1750),(-1900,3450)
 ax.set_xlim(X0,X1); ax.set_ylim(Z1,Z0); ax.set_aspect('equal'); ax.grid(alpha=0.3)
 ax.set_xlabel('x'); ax.set_ylabel('z (vers le bas = +z)')
 sm=plt.cm.ScalarMappable(cmap=cm,norm=plt.Normalize(0,4500)); plt.colorbar(sm,ax=ax,shrink=0.6,label='hauteur y')
-plt.savefig(r"C:/Users/hugo2/AppData/Local/Temp/bobmap.png",dpi=70,bbox_inches='tight')
+plt.savefig(os.path.join(tempfile.gettempdir(), "bobmap.png"),dpi=70,bbox_inches='tight')

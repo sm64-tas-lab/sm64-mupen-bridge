@@ -1,6 +1,9 @@
 . "$PSScriptRoot\lib.ps1"
 Invoke-MupenLua $s 'emu.set_speed_mode(2); return 1' | Out-Null
-Use-Milestone 'G:/tas-lab/MOVIE_BOB/sortie_porte.st' 11
+$bob_st = if ($env:MOVIE_BOB_ST) { $env:MOVIE_BOB_ST }
+    elseif (Test-Path "$PSScriptRoot\..\MOVIE_BOB\sortie_porte.st") { "$PSScriptRoot\..\MOVIE_BOB\sortie_porte.st" }
+    else { "$PSScriptRoot\sortie_porte.st" }
+if (Test-Path $bob_st) { Use-Milestone $bob_st 11 }
 function Route([string]$mode) {
   $m = (RunFrom 11 @(, @(0, 0, 0)))[-1].s; $fr = @(); $etape = 0; $log = @()
   for ($i = 0; $i -lt 90; $i++) {

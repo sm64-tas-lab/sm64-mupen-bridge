@@ -1,5 +1,5 @@
 {
-  "//": "Copy this 'sm64' entry into your project or user .mcp.json (or run the `claude mcp add` line in the server header) to expose all three SM64 tools to an interactive Claude Code session. MCP servers cannot be hot-added mid-session; start a new session after registering.",
+  "//": "Utilisez 'register_mcp.ps1' pour configurer automatiquement ce serveur, ou copiez l'entrée ci-dessous dans votre .mcp.json en adaptant le chemin.",
   "mcpServers": {
     "sm64": {
       "command": "powershell",
@@ -7,7 +7,7 @@
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
         "-File",
-        "D:\\mupen\\sm64-mupen-bridge\\tas\\control\\mcp\\sm64_mcp_server.ps1"
+        "<CHEMIN_VERS_LE_DEPOT>\\tas\\control\\mcp\\sm64_mcp_server.ps1"
       ]
     }
   }

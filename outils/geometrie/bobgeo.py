@@ -1,5 +1,8 @@
+import os
+from sm64_geo_common import get_decomp_dir
+DECOMP = get_decomp_dir()
 import re,math
-src=open(r"G:/tas-lab/repos/sm64-decomp/levels/bob/areas/1/collision.inc.c").read()
+src=open(os.path.join(DECOMP, "levels/bob/areas/1/collision.inc.c")).read()
 V=[tuple(map(int,m)) for m in re.findall(r"COL_VERTEX\((-?\d+),\s*(-?\d+),\s*(-?\d+)\)",src)]
 cur=None; out=[]
 for line in src.splitlines():

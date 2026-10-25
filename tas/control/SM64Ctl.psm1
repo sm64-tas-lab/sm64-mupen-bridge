@@ -20,19 +20,70 @@ $ErrorActionPreference = 'Stop'
 $script:ControlDir = Split-Path -Parent $PSCommandPath                       # ...\tas\control
 $script:Root       = Split-Path -Parent (Split-Path -Parent $script:ControlDir) # root of sm64-mupen-bridge
 $script:BridgeLua  = Join-Path $script:ControlDir 'mupen\bridge.lua'
-$script:MupenExe = if ($env:MUPEN_EXE -and (Test-Path $env:MUPEN_EXE)) { $env:MUPEN_EXE }
-    elseif (Test-Path 'D:\mupen\mupen64-rr-lua\build\out\mupen64.exe') { 'D:\mupen\mupen64-rr-lua\build\out\mupen64.exe' }
-    elseif (Test-Path 'G:\mupen\mupen64-rr-lua\build\out\mupen64.exe') { 'G:\mupen\mupen64-rr-lua\build\out\mupen64.exe' }
-    else { 'D:\mupen\mupen64-rr-lua\build\out\mupen64.exe' }   # build reel (l'ancien chemin sous sm64-toolkit n'existe plus)
-$script:DefaultRom = if ($env:SM64_ROM -and (Test-Path $env:SM64_ROM)) { $env:SM64_ROM }
-    elseif (Test-Path 'D:\mupen\mupen64-rr-lua\build\out\roms\Super Mario 64 (USA).z64') { 'D:\mupen\mupen64-rr-lua\build\out\roms\Super Mario 64 (USA).z64' }
-    elseif (Test-Path 'G:\testttttttt super mario\Super Mario 64 (USA).z64') { 'G:\testttttttt super mario\Super Mario 64 (USA).z64' }
-    else { 'D:\mupen\mupen64-rr-lua\build\out\roms\Super Mario 64 (USA).z64' }
+function Resolve-MupenExe {
+    if ($env:MUPEN_EXE -and (Test-Path $env:MUPEN_EXE)) { return (Resolve-Path $env:MUPEN_EXE).Path }
+    $cmd = Get-Command 'mupen64.exe' -ErrorAction SilentlyContinue
+    if ($cmd -and $cmd.Source) { return $cmd.Source }
+    $candidates = @(
+        (Join-Path $script:Root '..\mupen64-rr-lua\build\out\mupen64.exe'),
+        (Join-Path $script:Root '..\mupen-gamepad\build\out\mupen64.exe'),
+        (Join-Path $script:Root '..\mupen64-rr-lua\mupen64.exe'),
+        (Join-Path $script:Root '..\mupen64\mupen64.exe'),
+        (Join-Path $script:Root 'mupen64.exe'),
+        (Join-Path $script:Root 'bin\mupen64.exe'),
+        'D:\mupen\mupen64-rr-lua\build\out\mupen64.exe',
+        'C:\mupen\mupen64-rr-lua\build\out\mupen64.exe'
+    )
+    foreach ($c in $candidates) {
+        if (Test-Path $c) { return (Resolve-Path $c).Path }
+    }
+    return 'mupen64.exe'
+}
+
+function Resolve-DefaultRom {
+    if ($env:SM64_ROM -and (Test-Path $env:SM64_ROM)) { return (Resolve-Path $env:SM64_ROM).Path }
+    $candidates = @(
+        (Join-Path $script:Root '..\mupen64-rr-lua\build\out\roms\Super Mario 64 (USA).z64'),
+        (Join-Path $script:Root 'roms\Super Mario 64 (USA).z64'),
+        (Join-Path $script:Root 'Super Mario 64 (USA).z64'),
+        (Join-Path $script:Root '..\roms\Super Mario 64 (USA).z64'),
+        'D:\mupen\mupen64-rr-lua\build\out\roms\Super Mario 64 (USA).z64',
+        'C:\mupen\mupen64-rr-lua\build\out\roms\Super Mario 64 (USA).z64'
+    )
+    foreach ($c in $candidates) {
+        if (Test-Path $c) { return (Resolve-Path $c).Path }
+    }
+    $auto = Get-ChildItem $script:Root -Filter "*.z64" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($auto) { return $auto.FullName }
+    return 'Super Mario 64 (USA).z64'
+}
+
+function Resolve-StroopExe {
+    if ($env:STROOP_EXE -and (Test-Path $env:STROOP_EXE)) { return (Resolve-Path $env:STROOP_EXE).Path }
+    $candidates = @(
+        (Join-Path $script:Root '..\STROOP\STROOP.exe'),
+        (Join-Path $script:Root '..\STROOP-src\STROOP\bin\Debug\net10.0-windows7.0\STROOP.exe'),
+        (Join-Path $script:Root '..\STROOP\STROOP\bin\Debug\net8.0-windows\STROOP.exe'),
+        (Join-Path $script:Root 'STROOP\STROOP.exe'),
+        'D:\mupen\STROOP\STROOP.exe'
+    )
+    foreach ($c in $candidates) {
+        if (Test-Path $c) { return (Resolve-Path $c).Path }
+    }
+    return (Join-Path $script:Root 'STROOP\STROOP.exe')
+}
+
+$script:MupenExe   = Resolve-MupenExe
+$script:DefaultRom = Resolve-DefaultRom
+$script:StroopExe  = Resolve-StroopExe
+$script:StroopCfg  = if (Test-Path (Join-Path (Split-Path -Parent $script:StroopExe) 'Config')) {
+    Join-Path (Split-Path -Parent $script:StroopExe) 'Config'
+} else {
+    Join-Path $script:Root 'STROOP\Config'
+}
 $script:DefaultSt  = Join-Path $script:Root '30th Anniversary Task 3.st'
-$script:StroopCfg  = Join-Path $script:Root 'STROOP\STROOP\bin\Debug\net8.0-windows\Config'
-$script:StroopExe  = if (Test-Path 'D:\mupen\STROOP\STROOP.exe') { 'D:\mupen\STROOP\STROOP.exe' }
-    else { Join-Path $script:Root 'STROOP\STROOP\bin\Debug\net8.0-windows\STROOP.exe' }
 $script:SimRoot    = Join-Path (Split-Path -Parent (Split-Path -Parent $script:Root)) 'aitest2-improved'
+
 
 function Get-SM64Paths {
     [pscustomobject]@{

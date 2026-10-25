@@ -1,10 +1,15 @@
 . "$PSScriptRoot\lib.ps1"
 Invoke-MupenLua $s 'emu.set_speed_mode(2); return 1' | Out-Null
-$pre = @((Get-Content 'G:/tas-lab/MOVIE_BOB/apres_porte_inputs.json' -Raw | ConvertFrom-Json).frames | % { , @([int]$_[0], [int]$_[1], [int]$_[2]) })
-$st = 'G:/tas-lab/MOVIE_BOB/sortie_porte.st'
-Use-Milestone 'G:/tas-lab/MOVIE_BLJ/escalier_depart.st' 10
-Save-Milestone 10 $pre $st
-Use-Milestone $st 11
+$bob_dir = if ($env:MOVIE_BOB_DIR) { $env:MOVIE_BOB_DIR } else { Join-Path $PSScriptRoot '..\MOVIE_BOB' }
+$blj_dir = if ($env:MOVIE_BLJ_DIR) { $env:MOVIE_BLJ_DIR } else { Join-Path $PSScriptRoot '..\MOVIE_BLJ' }
+$pre_file = Join-Path $bob_dir 'apres_porte_inputs.json'
+$pre = if (Test-Path $pre_file) {
+    @((Get-Content $pre_file -Raw | ConvertFrom-Json).frames | % { , @([int]$_[0], [int]$_[1], [int]$_[2]) })
+} else { @() }
+$st = Join-Path $bob_dir 'sortie_porte.st'
+$escalier = Join-Path $blj_dir 'escalier_depart.st'
+if (Test-Path $escalier) { Use-Milestone $escalier 10; Save-Milestone 10 $pre $st }
+if (Test-Path $st) { Use-Milestone $st 11 }
 $m0 = (RunFrom 11 @(, @(0, 0, 0)))[-1].s; "jalon: " + (Fmt $m0) + " cam=$(CamYaw)"
 $mv = [math]::Atan2(-5400 - $m0.pos_x, -460 - $m0.pos_z) / (2 * [math]::PI) * 65536
 Load-MemState $s -Slot 11 | Out-Null; $a = St $mv (CamYaw)
