@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Temporary & runtime IPC
+session/
+*.tmp
+*.log
+bridge.log
+cmd.jsonl
+resp.jsonl
+status.json
+*.sm64ctlbak
+
+# OS / Editor
+.vscode/
+.zed/
+.idea/
+.DS_Store
+Thumbs.db
