@@ -5,7 +5,7 @@
 param([int]$Id, [string]$Milestone, [string]$TrialsFile, [string]$OutFile)
 Import-Module "$PSScriptRoot\..\tas\control\SM64Ctl.psm1" -Force -WarningAction SilentlyContinue
 [System.Threading.Thread]::CurrentThread.CurrentCulture = [cultureinfo]::InvariantCulture
-$s = Start-Mupen -NoSavestate -Rom 'G:\tas-lab\Super Mario 64 (USA).z64' -MupenExe 'G:\mupen\mupen64-rr-lua\build\out\mupen64.exe'
+$s = Start-Mupen -NoSavestate
 try {
     Set-Pause $s -Value $true; Load-State -Session $s -Path $Milestone | Out-Null; Start-Sleep 2; Set-Pause $s -Value $true
     Save-MemState $s -Slot 1 | Out-Null

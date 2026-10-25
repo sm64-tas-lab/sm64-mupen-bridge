@@ -3,7 +3,7 @@
 . "$PSScriptRoot\freerun.ps1"
 $nx = -0.536; $nz = 0.844
 function BehindXZ($x, $z) { - ((($x - 1456) * $nx) + (($z - 446) * $nz)) }
-$d = 'G:\tas-lab\MOVIE_CHOMP'
+$d = if ($env:MOVIE_CHOMP_DIR) { $env:MOVIE_CHOMP_DIR } else { Join-Path $PSScriptRoot '..\MOVIE_CHOMP' }
 $hit = $null
 foreach ($fuse in 150, 147, 144) {
     $tag = "bomb_${fuse}_" + (Get-Date -Format 'HHmmss')

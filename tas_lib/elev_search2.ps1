@@ -2,7 +2,7 @@
 # w neutres, k frames de marche vers (1680,4466), Z, Z+A (LJ), j frames Z seul, puis stick arriere + Z.
 # Critere : 0x479 sur la plateforme (1500<x<1760, 300<y<600). Arret au premier succes (w croissant).
 . "$PSScriptRoot\freerun.ps1"
-$d = 'G:\tas-lab\MOVIE_CHOMP'
+$d = if ($env:MOVIE_CHOMP_DIR) { $env:MOVIE_CHOMP_DIR } else { Join-Path $PSScriptRoot '..\MOVIE_CHOMP' }
 $aim = YawTo 2207 4373 1680 4466; $back = Wrap ($aim + 32768)
 $trials = @(); $meta = @()
 $back = 16384

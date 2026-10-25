@@ -18,7 +18,7 @@ $ErrorActionPreference = 'Stop'
 
 # ---- resolve important paths relative to this module -------------------------------------------
 $script:ControlDir = Split-Path -Parent $PSCommandPath                       # ...\tas\control
-$script:Root       = Split-Path -Parent (Split-Path -Parent $script:ControlDir) # ...\mupen-for-claude
+$script:Root       = Split-Path -Parent (Split-Path -Parent $script:ControlDir) # root of sm64-mupen-bridge
 $script:BridgeLua  = Join-Path $script:ControlDir 'mupen\bridge.lua'
 $script:MupenExe = if ($env:MUPEN_EXE -and (Test-Path $env:MUPEN_EXE)) { $env:MUPEN_EXE }
     elseif (Test-Path 'D:\mupen\mupen64-rr-lua\build\out\mupen64.exe') { 'D:\mupen\mupen64-rr-lua\build\out\mupen64.exe' }

@@ -2,7 +2,7 @@
 # Z, Z+A (LJ vers l'ouest), stick arriere (est) + Z jusqu'a l'atterrissage. Critere : 0x479 sur la plateforme
 # (x > 1680, y > 300, vitesse < 0). Arret au premier succes (par lots, w croissant).
 . "$PSScriptRoot\freerun.ps1"
-$d = 'G:\tas-lab\MOVIE_CHOMP'
+$d = if ($env:MOVIE_CHOMP_DIR) { $env:MOVIE_CHOMP_DIR } else { Join-Path $PSScriptRoot '..\MOVIE_CHOMP' }
 Use-Milestone "$d/c2a_passage.st" 27; $cy = CamYaw
 # vise le centre de la plateforme P127 (1680,4466) depuis l'arret apres l'atterrissage (~2207,4373)
 $aim = YawTo 2207 4373 1680 4466; $W = StickRaw $aim $cy; $E = StickRaw (Wrap ($aim + 32768)) $cy

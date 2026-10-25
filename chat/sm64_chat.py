@@ -9,17 +9,17 @@ Pre-requis : llama-server allume ('lancer-Coder.bat').
 Lancer     : python sm64_chat.py     (ou double-clic sur CHAT-sm64.bat)
 Commandes  : /reset (efface la conversation)   /quit (quitter)
 """
-import json, subprocess, urllib.request, sys
+import json, os, subprocess, urllib.request, sys
 try:
     sys.stdout.reconfigure(encoding="utf-8")   # accents francais lisibles dans le terminal
     sys.stdin.reconfigure(encoding="utf-8")
 except Exception:
     pass
 
-PROJECT = r"C:\Users\kitty\Desktop\sm64-gpu-bruteforce\crackhex update\mupen-claude\mupen-for-claude"
+PROJECT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 LLM_URL = "http://127.0.0.1:8080/v1/chat/completions"
 PS1     = PROJECT + r"\tas\control\mcp\sm64_mcp_server.ps1"
-SAVEST  = PROJECT + r"\30th Anniversary Task 4.st"
+SAVEST  = os.environ.get("SM64_SAVESTATE", os.path.join(PROJECT, "30th Anniversary Task 4.st"))
 # Jeu d'outils HAUT NIVEAU expose au modele (lean = le modele ne se perd pas)
 KEEP = {"start_mupen", "scan", "list_chests", "goto", "open_chest", "collect", "grab_star", "move", "get_state", "export_run", "reset_run", "stop_mupen"}
 MAX_TOOL_STEPS = 20   # garde-fou anti-boucle par tour

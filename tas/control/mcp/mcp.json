@@ -7,7 +7,7 @@
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
         "-File",
-        "C:\\Users\\hugo2\\Desktop\\sm64-gpu-bruteforce\\crackhex update\\mupen-claude\\mupen-for-claude\\tas\\control\\mcp\\sm64_mcp_server.ps1"
+        "D:\\mupen\\sm64-mupen-bridge\\tas\\control\\mcp\\sm64_mcp_server.ps1"
       ]
     }
   }

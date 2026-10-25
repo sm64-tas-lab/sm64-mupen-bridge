@@ -1,7 +1,7 @@
 # Recherche de la saisie du Bob-omb depuis c2a_passage.st : marcher vers theta, B a la frame f.
 # Critere : Mario en saisie (0x383) ; on garde la saisie la plus precoce. Arret par lots des le premier succes.
 . "$PSScriptRoot\freerun.ps1"
-$d = 'G:\tas-lab\MOVIE_CHOMP'
+$d = if ($env:MOVIE_CHOMP_DIR) { $env:MOVIE_CHOMP_DIR } else { Join-Path $PSScriptRoot '..\MOVIE_CHOMP' }
 Use-Milestone "$d/c2a_passage.st" 27; $cy = CamYaw
 $base = -32270; $thetas = @(0, -700, 700, -1400, 1400) | % { Wrap ($base + $_) }
 $trials = @(); $meta = @()

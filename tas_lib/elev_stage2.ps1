@@ -2,7 +2,7 @@
 # n BLJ espaces de 3 frames (les d derniers espaces de 2), e frames d'atterrissage, puis recul vers (tx,tz).
 # Critere : Mario DANS l'enclos (profondeur 60..340 derriere la grille, |abscisse| < 480, y 760..1000).
 . "$PSScriptRoot\freerun.ps1"
-$d = 'G:\tas-lab\MOVIE_CHOMP'
+$d = if ($env:MOVIE_CHOMP_DIR) { $env:MOVIE_CHOMP_DIR } else { Join-Path $PSScriptRoot '..\MOVIE_CHOMP' }
 $nx = -0.536; $nz = 0.844
 function Depth($x, $z) { - ((($x - 1456) * $nx) + (($z - 446) * $nz)) }
 function Along($x, $z) { (($x - 1456) * 0.844) + (($z - 446) * 0.536) }

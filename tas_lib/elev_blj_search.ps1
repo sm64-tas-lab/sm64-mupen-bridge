@@ -3,7 +3,7 @@
 # 3 frames d'atterrissage (Z), puis recul vers (1456,446) (stick oppose a la cible) pendant 70 frames.
 # Critere : Mario derriere la grille (> 60) au niveau de l'enclos (y >= 760). Arret au premier succes.
 . "$PSScriptRoot\freerun.ps1"
-$d = 'G:\tas-lab\MOVIE_CHOMP'
+$d = if ($env:MOVIE_CHOMP_DIR) { $env:MOVIE_CHOMP_DIR } else { Join-Path $PSScriptRoot '..\MOVIE_CHOMP' }
 $nx = -0.536; $nz = 0.844
 function BehindXZ($x, $z) { - ((($x - 1456) * $nx) + (($z - 446) * $nz)) }
 $trials = @(); $meta = @()
