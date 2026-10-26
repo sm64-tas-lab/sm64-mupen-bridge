@@ -12,11 +12,16 @@ def get_decomp_dir():
         os.path.abspath(os.path.join(here, "..", "..", "..", "sm64-decomp")),
         os.path.abspath(os.path.join(here, "..", "..", "..", "moteur", "deps", "sm64-decomp")),
         os.path.abspath(os.path.join(here, "..", "..", "..", "tas-lab", "HackerSM64")),
-        # Common machine paths
-        r"D:\moteur\deps\sm64-decomp",
-        r"D:\tas-lab\HackerSM64",
+        # Common machine paths (Windows)
+        os.path.expanduser("~/moteur/deps/sm64-decomp"),
+        os.path.expanduser("~/tas-lab/HackerSM64"),
+        # Environment variable fallback
+        os.environ.get("SM64_DECOMP_PATH", ""),
+        os.environ.get("DECOMP_DIR", ""),
     ]
     for c in candidates:
-        if os.path.isdir(os.path.join(c, "levels")):
+        if c and os.path.isdir(os.path.join(c, "levels")):
             return c
-    return candidates[0]
+    # If no decomp found, return the most likely candidate for error messages
+    # but don't fail silently - caller should handle missing decomp
+    return os.path.abspath(os.path.join(here, "..", "..", "..", "sm64-decomp"))

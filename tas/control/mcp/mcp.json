@@ -1,11 +1,12 @@
 {
-  "//": "Utilisez 'register_mcp.ps1' pour configurer automatiquement ce serveur, ou copiez l'entrée ci-dessous dans votre .mcp.json en adaptant le chemin.",
+  "//": "Ce fichier est un exemple. Pour l'utiliser, remplacez <CHEMIN_VERS_LE_DEPOT> par le chemin absolu de votre dépôt.\n// Alternatives:\n//   1. Utilisez le script register_mcp.ps1 pour configuration automatique\n//   2. Définissez SM64_MCP_SERVER_PATH dans votre environnement\n//   3. Copiez ce fichier dans ~/.mcp.json ou votre configuration Claude avec le chemin adapté",
   "mcpServers": {
     "sm64": {
       "command": "powershell",
       "args": [
         "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
+        "-ExecutionPolicy",
+        "Bypass",
         "-File",
         "<CHEMIN_VERS_LE_DEPOT>\\tas\\control\\mcp\\sm64_mcp_server.ps1"
       ]

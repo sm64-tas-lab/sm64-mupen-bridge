@@ -1,4 +1,4 @@
-﻿<#
+<#
   SM64Ctl.psm1 — PowerShell SDK to drive the three SM64 tools at 100%:
 
     * mupen64-rr-lua  — the real emulator, via the bridge.lua file-IPC server (this module launches
@@ -24,6 +24,10 @@ function Resolve-MupenExe {
     if ($env:MUPEN_EXE -and (Test-Path $env:MUPEN_EXE)) { return (Resolve-Path $env:MUPEN_EXE).Path }
     $cmd = Get-Command 'mupen64.exe' -ErrorAction SilentlyContinue
     if ($cmd -and $cmd.Source) { return $cmd.Source }
+    # Additional environment variable override
+    if ($env:MUPEN_EXE_DIR -and (Test-Path (Join-Path $env:MUPEN_EXE_DIR 'mupen64.exe'))) {
+        return (Resolve-Path (Join-Path $env:MUPEN_EXE_DIR 'mupen64.exe')).Path
+    }
     $candidates = @(
         (Join-Path $script:Root '..\mupen64-rr-lua\build\out\mupen64.exe'),
         (Join-Path $script:Root '..\mupen-gamepad\build\out\mupen64.exe'),
@@ -31,6 +35,9 @@ function Resolve-MupenExe {
         (Join-Path $script:Root '..\mupen64\mupen64.exe'),
         (Join-Path $script:Root 'mupen64.exe'),
         (Join-Path $script:Root 'bin\mupen64.exe'),
+        # User-configurable search paths via environment variable (semicolon-separated)
+        ($env:MUPEN_EXE_SEARCH_PATHS -split ';' | ForEach-Object { Join-Path $_ 'mupen64.exe' }),
+        # Legacy hardcoded paths (kept for backward compatibility but lower priority)
         'D:\mupen\mupen64-rr-lua\build\out\mupen64.exe',
         'C:\mupen\mupen64-rr-lua\build\out\mupen64.exe'
     )
@@ -42,16 +49,31 @@ function Resolve-MupenExe {
 
 function Resolve-DefaultRom {
     if ($env:SM64_ROM -and (Test-Path $env:SM64_ROM)) { return (Resolve-Path $env:SM64_ROM).Path }
+    # Support for ROM search directory via environment variable
+    if ($env:SM64_ROM_DIR) {
+        $romDirCandidates = @(
+            (Join-Path $env:SM64_ROM_DIR 'Super Mario 64 (USA).z64'),
+            (Join-Path $env:SM64_ROM_DIR 'sm64-us.z64'),
+            (Join-Path $env:SM64_ROM_DIR 'sm64-eu.z64'),
+            (Join-Path $env:SM64_ROM_DIR 'sm64-jp.z64')
+        )
+        foreach ($c in $romDirCandidates) {
+            if (Test-Path $c) { return (Resolve-Path $c).Path }
+        }
+    }
     $candidates = @(
         (Join-Path $script:Root '..\mupen64-rr-lua\build\out\roms\Super Mario 64 (USA).z64'),
         (Join-Path $script:Root 'roms\Super Mario 64 (USA).z64'),
         (Join-Path $script:Root 'Super Mario 64 (USA).z64'),
         (Join-Path $script:Root '..\roms\Super Mario 64 (USA).z64'),
+        # User-configurable ROM paths via environment variable (semicolon-separated)
+        ($env:SM64_ROM_PATHS -split ';' | Where-Object { $_ -and (Test-Path $_) }),
+        # Legacy hardcoded paths (kept for backward compatibility but lower priority)
         'D:\mupen\mupen64-rr-lua\build\out\roms\Super Mario 64 (USA).z64',
         'C:\mupen\mupen64-rr-lua\build\out\roms\Super Mario 64 (USA).z64'
     )
     foreach ($c in $candidates) {
-        if (Test-Path $c) { return (Resolve-Path $c).Path }
+        if ($c -and (Test-Path $c)) { return (Resolve-Path $c).Path }
     }
     $auto = Get-ChildItem $script:Root -Filter "*.z64" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($auto) { return $auto.FullName }
@@ -60,15 +82,31 @@ function Resolve-DefaultRom {
 
 function Resolve-StroopExe {
     if ($env:STROOP_EXE -and (Test-Path $env:STROOP_EXE)) { return (Resolve-Path $env:STROOP_EXE).Path }
+    # Support for STROOP directory via environment variable
+    if ($env:STROOP_DIR) {
+        $stroopDirCandidates = @(
+            (Join-Path $env:STROOP_DIR 'STROOP.exe'),
+            (Join-Path $env:STROOP_DIR 'bin\Debug\net10.0-windows7.0\STROOP.exe'),
+            (Join-Path $env:STROOP_DIR 'bin\Debug\net8.0-windows\STROOP.exe'),
+            (Join-Path $env:STROOP_DIR 'bin\Release\net10.0-windows7.0\STROOP.exe'),
+            (Join-Path $env:STROOP_DIR 'bin\Release\net8.0-windows\STROOP.exe')
+        )
+        foreach ($c in $stroopDirCandidates) {
+            if (Test-Path $c) { return (Resolve-Path $c).Path }
+        }
+    }
     $candidates = @(
         (Join-Path $script:Root '..\STROOP\STROOP.exe'),
         (Join-Path $script:Root '..\STROOP-src\STROOP\bin\Debug\net10.0-windows7.0\STROOP.exe'),
         (Join-Path $script:Root '..\STROOP\STROOP\bin\Debug\net8.0-windows\STROOP.exe'),
         (Join-Path $script:Root 'STROOP\STROOP.exe'),
+        # User-configurable STROOP search paths via environment variable (semicolon-separated)
+        ($env:STROOP_EXE_SEARCH_PATHS -split ';' | ForEach-Object { Join-Path $_ 'STROOP.exe' }),
+        # Legacy hardcoded paths (kept for backward compatibility but lower priority)
         'D:\mupen\STROOP\STROOP.exe'
     )
     foreach ($c in $candidates) {
-        if (Test-Path $c) { return (Resolve-Path $c).Path }
+        if ($c -and (Test-Path $c)) { return (Resolve-Path $c).Path }
     }
     return (Join-Path $script:Root 'STROOP\STROOP.exe')
 }
@@ -81,8 +119,21 @@ $script:StroopCfg  = if (Test-Path (Join-Path (Split-Path -Parent $script:Stroop
 } else {
     Join-Path $script:Root 'STROOP\Config'
 }
-$script:DefaultSt  = Join-Path $script:Root '30th Anniversary Task 3.st'
-$script:SimRoot    = Join-Path (Split-Path -Parent (Split-Path -Parent $script:Root)) 'aitest2-improved'
+# Default savestate: use environment variable if set, otherwise fall back to default name in project root
+$script:DefaultSt  = if ($env:SM64_DEFAULT_SAVESTATE) {
+    if (Test-Path $env:SM64_DEFAULT_SAVESTATE) { $env:SM64_DEFAULT_SAVESTATE }
+    else { Join-Path $script:Root $env:SM64_DEFAULT_SAVESTATE }
+} else {
+    Join-Path $script:Root '30th Anniversary Task 3.st'
+}
+# aitest2-improved root: use environment variable if set, otherwise derive from project location
+$script:SimRoot    = if ($env:SM64_SIM_ROOT -and (Test-Path $env:SM64_SIM_ROOT)) {
+    (Resolve-Path $env:SM64_SIM_ROOT).Path
+} elseif ($env:AITEST2_ROOT -and (Test-Path $env:AITEST2_ROOT)) {
+    (Resolve-Path $env:AITEST2_ROOT).Path
+} else {
+    Join-Path (Split-Path -Parent (Split-Path -Parent $script:Root)) 'aitest2-improved'
+}
 
 
 function Get-SM64Paths {

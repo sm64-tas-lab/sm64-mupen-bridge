@@ -17,8 +17,8 @@ except Exception:
     pass
 
 PROJECT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-LLM_URL = "http://127.0.0.1:8080/v1/chat/completions"
-PS1     = PROJECT + r"\tas\control\mcp\sm64_mcp_server.ps1"
+LLM_URL = os.environ.get("SM64_LLM_URL", "http://127.0.0.1:8080/v1/chat/completions")
+PS1 = os.environ.get("SM64_MCP_SERVER", PROJECT + r"\tas\control\mcp\sm64_mcp_server.ps1")
 SAVEST  = os.environ.get("SM64_SAVESTATE", os.path.join(PROJECT, "30th Anniversary Task 4.st"))
 # Jeu d'outils HAUT NIVEAU expose au modele (lean = le modele ne se perd pas)
 KEEP = {"start_mupen", "scan", "list_chests", "goto", "open_chest", "collect", "grab_star", "move", "get_state", "export_run", "reset_run", "stop_mupen"}
@@ -111,7 +111,7 @@ def main():
                     try: args=json.loads(fn["arguments"]) if isinstance(fn["arguments"],str) else fn["arguments"]
                     except: args=fn["arguments"] or {}
                     print(f"   [outil] {name}({json.dumps(args, ensure_ascii=False)[:100]})")
-                    sig=name+"|"+json.dumps(args,sort_keys=True,ensure_ascii=False)
+                    sig=name+"|\"+json.dumps(args,sort_keys=True,ensure_ascii=False)
                     seen_calls[sig]=seen_calls.get(sig,0)+1
                     # anti-boucle: un outil READ-ONLY rappele avec les MEMES args donne un resultat IDENTIQUE
                     # (Mario n'a pas bouge). On court-circuite au 2e (read-only) / 3e (tout outil) appel identique
