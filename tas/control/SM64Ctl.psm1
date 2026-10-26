@@ -43,6 +43,9 @@ function Resolve-MupenExe {
 function Resolve-DefaultRom {
     if ($env:SM64_ROM -and (Test-Path $env:SM64_ROM)) { return (Resolve-Path $env:SM64_ROM).Path }
     $candidates = @(
+        (Join-Path $env:USERPROFILE 'Downloads\Super Mario 64 (USA).z64'),
+        (Join-Path $HOME 'Downloads\Super Mario 64 (USA).z64'),
+        'C:\Users\hugo2\Downloads\Super Mario 64 (USA).z64',
         (Join-Path $script:Root '..\mupen64-rr-lua\build\out\roms\Super Mario 64 (USA).z64'),
         (Join-Path $script:Root 'roms\Super Mario 64 (USA).z64'),
         (Join-Path $script:Root 'Super Mario 64 (USA).z64'),
@@ -542,7 +545,25 @@ function Stop-Movie { param($Session) Send-Cmd $Session 'movie' @{ job='stop' } 
 
 function Invoke-MupenAction { param($Session, [Parameter(Mandatory)][string]$Name) Send-Cmd $Session 'action' @{ name=$Name } }
 function Get-MupenActions   { param($Session, [string]$Filter='') (Send-Cmd $Session 'actions' @{ filter=$Filter }).actions }
-function Save-Screenshot    { param($Session, [Parameter(Mandatory)][string]$Path) Send-Cmd $Session 'screenshot' @{ path=$Path } }
+function Save-Screenshot {
+    param($Session, [Parameter(Mandatory)][string]$Path)
+    $res = Send-Cmd $Session 'screenshot' @{ path=$Path }
+    # Verifier si le fichier genere est absent ou vide / noir, et recuperer le dernier BMP Mupen si besoin
+    Start-Sleep -Milliseconds 200
+    if (-not (Test-Path $Path) -or (Get-Item $Path).Length -lt 2000) {
+        $mupenDir = Split-Path -Parent $script:MupenExe
+        $bmpDir = Join-Path $mupenDir 'screenshots'
+        if (Test-Path $bmpDir) {
+            $latest = Get-ChildItem (Join-Path $bmpDir '*.bmp') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($latest -and ((Get-Date) - $latest.LastWriteTime).TotalSeconds -lt 15) {
+                try {
+                    python -c "from PIL import Image; Image.open(r'$($latest.FullName)').save(r'$Path')" 2>$null
+                } catch {}
+            }
+        }
+    }
+    return $res
+}
 function Invoke-MupenLua    { param($Session, [Parameter(Mandatory)][string]$Code) Send-Cmd $Session 'eval' @{ code=$Code } }
 
 function Stop-Mupen {
