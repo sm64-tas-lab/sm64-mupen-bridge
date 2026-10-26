@@ -447,9 +447,15 @@ function Invoke-Replay {
 function Save-State { param($Session, [int]$Slot = 1, [string]$Path)
     if ($Path) { Send-Cmd $Session 'savestate' @{ job='save'; path=$Path } | Out-Null }
     else       { Send-Cmd $Session 'savestate' @{ job='save'; slot=$Slot } | Out-Null } }
-function Load-State { param($Session, [int]$Slot = 1, [string]$Path)
-    if ($Path) { Send-Cmd $Session 'savestate' @{ job='load'; path=$Path } | Out-Null }
-    else       { Send-Cmd $Session 'savestate' @{ job='load'; slot=$Slot } | Out-Null } }
+function Load-State { param($Session, [int]$Slot = 1, [string]$Path, [int]$TimeoutSec = 30)
+    if ($Path) {
+        $fullPath = [System.IO.Path]::GetFullPath($Path)
+        Send-Cmd $Session 'savestate' @{ job='load'; path=$fullPath } -TimeoutSec $TimeoutSec | Out-Null
+    }
+    else {
+        Send-Cmd $Session 'savestate' @{ job='load'; slot=$Slot } -TimeoutSec $TimeoutSec | Out-Null
+    }
+}
 
 # In-memory savestates (fast, disk-free) — the primitive for search/branching.
 function Save-MemState { param($Session, [int]$Slot = 1) Send-Cmd $Session 'memstate' @{ job='save'; slot=$Slot } }
@@ -546,19 +552,31 @@ function Stop-Movie { param($Session) Send-Cmd $Session 'movie' @{ job='stop' } 
 function Invoke-MupenAction { param($Session, [Parameter(Mandatory)][string]$Name) Send-Cmd $Session 'action' @{ name=$Name } }
 function Get-MupenActions   { param($Session, [string]$Filter='') (Send-Cmd $Session 'actions' @{ filter=$Filter }).actions }
 function Save-Screenshot {
-    param($Session, [Parameter(Mandatory)][string]$Path)
+    param($Session, [Parameter(Mandatory)][string]$Path, [switch]$NoAdvance)
     $res = Send-Cmd $Session 'screenshot' @{ path=$Path }
+    if (-not $NoAdvance) {
+        Step-Frames $Session -Frames 2 | Out-Null
+        Start-Sleep -Milliseconds 250
+    } else {
+        Start-Sleep -Milliseconds 200
+    }
     # Verifier si le fichier genere est absent ou vide / noir, et recuperer le dernier BMP Mupen si besoin
-    Start-Sleep -Milliseconds 200
     if (-not (Test-Path $Path) -or (Get-Item $Path).Length -lt 2000) {
         $mupenDir = Split-Path -Parent $script:MupenExe
         $bmpDir = Join-Path $mupenDir 'screenshots'
         if (Test-Path $bmpDir) {
-            $latest = Get-ChildItem (Join-Path $bmpDir '*.bmp') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-            if ($latest -and ((Get-Date) - $latest.LastWriteTime).TotalSeconds -lt 15) {
+            $latest = Get-ChildItem (Join-Path $bmpDir '*.bmp') | Where-Object { $_.Length -gt 1000 } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($latest -and ((Get-Date) - $latest.LastWriteTime).TotalSeconds -lt 30) {
                 try {
-                    python -c "from PIL import Image; Image.open(r'$($latest.FullName)').save(r'$Path')" 2>$null
-                } catch {}
+                    Add-Type -AssemblyName System.Drawing
+                    $img = [System.Drawing.Image]::FromFile($latest.FullName)
+                    $ext = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
+                    $fmt = if ($ext -eq '.bmp') { [System.Drawing.Imaging.ImageFormat]::Bmp } else { [System.Drawing.Imaging.ImageFormat]::Png }
+                    $img.Save($Path, $fmt)
+                    $img.Dispose()
+                } catch {
+                    try { python -c "from PIL import Image; Image.open(r'$($latest.FullName)').save(r'$Path')" 2>$null } catch {}
+                }
             }
         }
     }
