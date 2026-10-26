@@ -26,7 +26,6 @@ sm64-mupen-bridge/
 ├── outils/
 │   ├── geometrie/                   # SM64 geometry / collision tools
 │   └── rag/                         # RAG query scripts
-├── chat/                            # Local LLM chat interface to drive Mupen
 └── README.md
 ```
 

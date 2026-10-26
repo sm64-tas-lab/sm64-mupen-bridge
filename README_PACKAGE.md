@@ -9,7 +9,6 @@
 - `tas/control/m64_header_template.bin`: `.m64` movie header template.
 - `tas/control/README.md`, `HOW_IT_WORKS.md`, `USER_GUIDE.md`: full reference documentation.
 - `tas_lib/`: TAS library (milestone management, parallel search, SBLJ/BLJ/replay scripts).
-- `chat/`: local interactive chat interface (GLM / LLM) driving Mupen.
 - `outils/geometrie/`: collision inspection and mapping.
 - `outils/rag/`: RAG database queries.
 
