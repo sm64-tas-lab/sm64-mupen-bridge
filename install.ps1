@@ -74,9 +74,13 @@ $cfg | ConvertTo-Json | Set-Content $CfgPath -Encoding UTF8
 function Register-Mcp([string]$name, [string]$command, [string[]]$arguments, [string]$skill) {
     $claude = Get-Command claude -ErrorAction SilentlyContinue
     if ($claude) {
-        & claude mcp remove --scope user $name *> $null
-        & claude mcp add --scope user $name -- $command @arguments
-        Write-Host "  Claude Code: $name added"
+        $old = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'             # (PowerShell 5.1 turns a native command's stderr into an error)
+        & claude mcp remove --scope user $name 2>&1 | Out-Null
+        & claude mcp add --scope user $name -- $command @arguments 2>&1 | Out-Null
+        $ok = $LASTEXITCODE -eq 0
+        $ErrorActionPreference = $old
+        Write-Host "  Claude Code: $(if ($ok) { "$name added" } else { "adding $name failed" })"
         if ($skill -and (Test-Path $skill)) {
             $dst = Join-Path $HOME ".claude\skills\$name"
             New-Item -ItemType Directory -Force $dst | Out-Null
