@@ -4,7 +4,7 @@
   and it holds the live mupen session in a script variable across calls (so start_mupen once, then
   read/step many times).
 
-  Register (in an interactive Claude Code session, or edit .mcp.json — see control/mcp/mcp.json):
+  Register (INSTALL.bat does it; or by hand):
       claude mcp add sm64 -- powershell -NoProfile -ExecutionPolicy Bypass -File "<abs path>\sm64_mcp_server.ps1"
 
   Protocol: newline-delimited JSON-RPC over stdio. ONLY JSON-RPC goes to stdout; logs go to stderr.
@@ -139,45 +139,28 @@ $TOOLS = [ordered]@{
     desc='Save a PNG screenshot of the emulator to a path.'
     schema=@{type='object';properties=@{ path=@{type='string'} }; required=@('path') }
     handler={ param($a) TextResult (Save-Screenshot $script:SESS -Path $a.path) } }
-  'sim_example' = @{
-    desc='Build+run an sm64-sim-rs CPU-simulator example by name (e.g. selftest, blj_probe, ttm_probe). Returns output.'
-    schema=@{type='object';properties=@{ name=@{type='string'}; release=@{type='boolean'} }; required=@('name') }
-    handler={ param($a) $o=Invoke-SimExample -Name $a.name -Release:([bool](Def $a.release $true)); TextResult (($o|Select-Object -Last 40) -join "`n") } }
-  'sim_examples' = @{
-    desc='List available sm64-sim-rs examples.'
-    schema=@{type='object';properties=@{}}
-    handler={ param($a) TextResult @{ examples=(Get-SimExamples) } } }
-  'sim_bruteforce' = @{
-    desc='Build+run a GPU bruteforcer binary (guided_flying_bruteforce etc.). env: {GEN,BATCHES,OUT,TX,TY,TZ}. First build is slow.'
-    schema=@{type='object';properties=@{ bin=@{type='string'}; env=@{type='object'} }}
-    handler={ param($a) $e=@{}; if($a.env){ $a.env.PSObject.Properties|ForEach-Object{ $e[$_.Name]=$_.Value } }
-              $o=Invoke-SimBruteforce -Bin (Def $a.bin 'guided_flying_bruteforce') -EnvVars $e; TextResult (($o|Select-Object -Last 40) -join "`n") } }
   'paths' = @{
     desc='Show resolved tool paths and existence checks.'
     schema=@{type='object';properties=@{}}
     handler={ param($a) TextResult (Get-SM64Paths) } }
-  'confirm_movie' = @{
-    desc='THE verify gate: replay a COMPLETE movie (a [[x,y,btn]] json, from the .st incl. pre-mount prefix) on a fresh mupen and report {Ok,Mounted,MountFrame,ShellKept,Coins,CoinSlots,VoidFrame,Dur,Frames}. Counts red coins BY POSITION. Never call a built run good until this passes. Starts/stops its own mupen.'
-    schema=@{type='object';properties=@{ sticks=@{type='string';description='path to the full-movie [[x,y,btn]] json'}; margin=@{type='number'}; require_coins=@{type='number'} }; required=@('sticks') }
-    handler={ param($a) $p=@{ Sticks=$a.sticks }; if($null -ne $a.margin){$p.Margin=[double]$a.margin}; if($null -ne $a.require_coins){$p.RequireCoins=[double]$a.require_coins}
-              TextResult (Confirm-Movie @p) } }
+  'replay_movie' = @{
+    desc='Prove a movie: replay one made by export_run (its .m64 or .sticks.json; from the .st beside it) on a fresh mupen and return the final Mario state, to compare with the state the run ended on.'
+    schema=@{type='object';properties=@{ movie=@{type='string';description='the .m64 (or .sticks.json) written by export_run'}; savestate=@{type='string';description='optional; default the .st beside the movie'} }; required=@('movie') }
+    handler={ param($a) $p=@{ Sticks=(Resolve-MoviePath $a.movie '') }; if($a.savestate){ $p.Savestate=$a.savestate }
+              TextResult (Invoke-Replay @p) } }
   'export_m64' = @{
     desc='Build a VALID .m64 from a stick-list json (handles the ROM-name/plugin/frame-count/byte-order traps). start: savestate (default; needs a same-basename .st beside the .m64) or poweron.'
     schema=@{type='object';properties=@{ sticks=@{type='string'}; out=@{type='string'}; start=@{type='string'}; template=@{type='string'} }; required=@('sticks','out') }
     handler={ param($a) $p=@{ Sticks=$a.sticks; Out=$a.out }; if($a.start){$p.Start=$a.start}; if($a.template){$p.Template=$a.template}
               TextResult (Export-M64 @p) } }
   'octagon_clamp' = @{
-    desc='Humanize a stick-list json by clamping to the N64 octagonal gate (T=160 => diagonal notch ~80). Writes the clamped [[x,y,btn]] to out_json. Re-verify with confirm_movie afterwards (rounding can shift a razor-precise ending).'
+    desc='Humanize a stick-list json by clamping to the N64 octagonal gate (T=160 => diagonal notch ~80). Writes the clamped [[x,y,btn]] to out_json. Re-verify with replay_movie afterwards (rounding can shift a razor-precise ending).'
     schema=@{type='object';properties=@{ sticks=@{type='string'}; out_json=@{type='string'}; t=@{type='number'}; cardinal=@{type='number'} }; required=@('sticks','out_json') }
     handler={ param($a) $p=@{ Sticks=$a.sticks }; if($null -ne $a.t){$p.T=[double]$a.t}; if($null -ne $a.cardinal){$p.Cardinal=[double]$a.cardinal}
               $c=ConvertTo-OctagonSticks @p
               $json='['+((@($c)|ForEach-Object{'['+($_ -join ',')+']'}) -join ',')+']'
               Set-Content -Path $a.out_json -Value $json -Encoding Ascii
               TextResult @{ ok=$true; out=$a.out_json; frames=@($c).Count } } }
-  'list_chests' = @{
-    desc='List the task-4 chest/star world targets by name (chest1..chest4) with their (x,z). Use these coords with goto. No need to reverse-engineer the object pool.'
-    schema=@{type='object';properties=@{}}
-    handler={ param($a) $t=Get-Task4Targets; $o=@{}; foreach($k in $t.Keys){ $o[$k]=@{ x=$t[$k][0]; z=$t[$k][1] } }; TextResult $o } }
   'goto' = @{
     desc='HIGH-LEVEL navigation: move Mario to a world position (x,z) autonomously (closed-loop beeline; handles walls by persistence). ALWAYS writes a replayable .m64 movie (auto-named in tas\movies\ unless save_m64 is given) and returns its path in `movie` plus a ready-to-report `summary`. Returns {reached,dist,steps,x,z,frames,movie,summary}. reached=true means within stop_dist (default 200). This is the tool to reach a point / TAS a route: goto each target in turn (coords via list_chests). style="longjump" makes Mario cover open ground with long jumps. Run from the task-4 savestate (calibration is camera-relative).'
     schema=@{type='object';properties=@{
@@ -201,22 +184,6 @@ $TOOLS = [ordered]@{
               if($mv){ $out.movie=$mv.movie; $out.movie_frames=$mv.movie_frames; $out.movie_st=$mv.movie_st
                        $out.summary=("Run to ({0},{1}): reached={2}, dist={3}. Movie of the complete run: {4}." -f [int]$a.x,[int]$a.z,$r.Reached,$r.Dist,$mv.movie) }
               else { $out.summary=("Run to ({0},{1}): reached={2}, dist={3}." -f [int]$a.x,[int]$a.z,$r.Reached,$r.Dist) }
-              TextResult $out } }
-  'open_chest' = @{
-    desc='Open task-4 chest N (1-4). A chest opens ONLY when Mario contacts it FROM ITS FRONT FACE and chests must be opened IN ORDER 1->2->3->4 (this tool handles the front approach automatically; you must still call them in order). Verifies the open for REAL via the chest-progress counter: opened=true ONLY if it actually incremented (opened=false if wrong order or bad contact). ALWAYS writes a replayable .m64 movie (auto-named in tas\movies\ unless save_m64) plus a ready-to-report `summary`. For all 4 chests: open_chest 1,2,3,4 in order, then export_run for one combined movie. Returns {opened, chest_progress_before, chest_progress_after, reached, x, z, movie, summary}.'
-    schema=@{type='object';properties=@{
-        chest=@{type='integer';description='chest number 1-4 (see list_chests)'}
-        stop_dist=@{type='number';description='approach distance (default 170 = contact)'}
-        style=@{type='string';enum=@('walk','longjump');description="locomotion: 'walk' (default) or 'longjump' (cover open ground with long jumps, then walk to touch)"}
-        save_m64=@{type='string';description='optional output .m64 path to record this run'} }; required=@('chest') }
-    handler={ param($a) $p=@{ Chest=[int]$a.chest }; if($null -ne $a.stop_dist){$p.StopDist=[double]$a.stop_dist}
-              if($a.style){$p.Style=$a.style}
-              $r=Invoke-OpenChest $script:SESS @p
-              Add-RunInputs $r.Inputs
-              $out=[ordered]@{ ok=$true; chest=$r.Chest; opened=$r.Opened; reason=$r.Reason; chest_progress_before=$r.ProgressBefore; chest_progress_after=$r.ProgressAfter; dist=$r.Dist; reached=$r.Reached; x=$r.X; z=$r.Z; frames=$r.Frames }
-              $mv=Export-RunSoFar ("chest{0}" -f [int]$a.chest) $a.save_m64
-              if($mv){ $out.movie=$mv.movie; $out.movie_frames=$mv.movie_frames; $out.movie_st=$mv.movie_st }
-              $out.summary=("Chest {0}: opened={1} [{2}] (chest_progress {3}->{4}). Movie: {5}." -f $r.Chest,$r.Opened,$r.Reason,$r.ProgressBefore,$r.ProgressAfter,(Def $mv.movie '(nothing recorded)'))
               TextResult $out } }
   'scan' = @{
     desc='PERCEPTION: see what is AROUND Mario instead of navigating blind. Returns Mario context (pos x/y/z, floor/ceil height, facing, num_stars), named OBJECTS (name, x, z, dist, dx, dz, dy=height above Mario) AND collision WALLS (x, z, dist, dx, dz, normal nx/nz, y_lo/y_hi). To FIND a specific target ANYWHERE (not just nearby), pass filter (substring/regex on the name, e.g. "red coin", "coin", "star", "switch") -> returns every match sorted by distance across a large radius. Objects give x,z and dy; for a 3D goto you need the target Y = mario.y + dy. Set walls:false to skip walls (faster).'
@@ -286,7 +253,7 @@ $TOOLS = [ordered]@{
               } else { $out.summary=$r.Reason }
               TextResult $out } }
   'export_run' = @{
-    desc='Export ONE replayable .m64 movie of EVERYTHING done since start_mupen (all goto/move/open_chest legs combined, in order), from the loaded savestate. Use this AFTER a multi-step run (e.g. chest 1 then chest 2) to get a single continuous movie instead of one file per leg. Auto-named in tas\movies\ unless out is given.'
+    desc='Export ONE replayable .m64 movie of EVERYTHING done since start_mupen (all step_frames/goto/move legs combined, in order), from the loaded savestate. Use this AFTER a multi-step run (e.g. chest 1 then chest 2) to get a single continuous movie instead of one file per leg. Auto-named in tas\movies\ unless out is given.'
     schema=@{type='object';properties=@{ out=@{type='string';description='output .m64 path (optional)'} }}
     handler={ param($a)
               if(@($script:RUN_INPUTS).Count -eq 0){ TextResult @{ ok=$false; message="Nothing to export: no movement recorded since start_mupen. Play frames first (step_frames, goto, move...)." } }
@@ -334,7 +301,7 @@ while ($true) {
                 if (-not $TOOLS.Contains($name)) { ReplyErr $id -32601 "unknown tool: $name"; break }
                 # Clear, actionable error when a mupen-dependent tool is called before start_mupen
                 # (otherwise it fails deep in PowerShell with a cryptic "Session is null" bind error).
-                $script:NoSessionTools = @('start_mupen','list_chests','sim_example','sim_examples','sim_bruteforce','paths','export_m64','octagon_clamp','confirm_movie')
+                $script:NoSessionTools = @('start_mupen','paths','export_m64','octagon_clamp','replay_movie')
                 if ($null -eq $script:SESS -and -not ($script:NoSessionTools -contains $name)) {
                     Reply $id @{ content=@(@{ type='text'; text="ERROR: mupen is not running. Call the 'start_mupen' tool FIRST (NOT 'invoke_action') with the task's absolute savestate, then retry '$name'." }); isError=$true }
                     break

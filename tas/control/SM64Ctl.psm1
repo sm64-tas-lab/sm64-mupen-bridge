@@ -1,15 +1,13 @@
 ﻿<#
-  SM64Ctl.psm1 — PowerShell SDK to drive the three SM64 tools at 100%:
+  SM64Ctl.psm1 — PowerShell SDK to drive the SM64 tools:
 
     * mupen64-rr-lua  — the real emulator, via the bridge.lua file-IPC server (this module launches
                         it, sends JSON commands, reads game state, injects input, steps frames,
                         does savestates, plays movies, invokes any menu action).
     * STROOP          — its full variable database (Config/*Data.xml) parsed here, so every STROOP
                         variable can be COMPUTED from a live RAM read (Get-StroopVars) without the GUI.
-    * aitest2-improved — the Rust CPU sim (sm64-sim-rs) and the GPU bruteforcers
-                        (sm64-gpu-handover/spirv_run), built/run through Invoke-Sim*.
 
-  Nothing here is committed or pushed. Import with:
+  Import with:
       Import-Module '...\tas\control\SM64Ctl.psm1' -Force
   Then:  $s = Start-Mupen ; Get-MarioState $s ; Step-Frames $s -Frames 4 -Input @{A=$true}
 #>
@@ -92,7 +90,6 @@ $script:StroopCfg  = if (Test-Path (Join-Path (Split-Path -Parent $script:Stroop
     Join-Path $script:Root 'STROOP\Config'
 }
 $script:DefaultSt  = Join-Path $script:Root '30th Anniversary Task 3.st'
-$script:SimRoot    = Join-Path (Split-Path -Parent (Split-Path -Parent $script:Root)) 'aitest2-improved'
 
 
 function Get-SM64Paths {
@@ -104,10 +101,8 @@ function Get-SM64Paths {
         DefaultSt  = $script:DefaultSt
         StroopCfg  = $script:StroopCfg
         StroopExe  = $script:StroopExe
-        SimRoot    = $script:SimRoot
         MupenExists  = Test-Path $script:MupenExe
         StroopExists = Test-Path $script:StroopExe
-        SimExists    = Test-Path $script:SimRoot
     }
 }
 
@@ -724,72 +719,6 @@ function Start-Stroop {
     Start-Process -FilePath $script:StroopExe -PassThru
 }
 
-# ================================================================================================
-#  aitest2-improved — Rust CPU sim + GPU bruteforcers
-# ================================================================================================
-
-function Invoke-Cargo {
-    <# Run cargo without letting stderr warnings trip PS 5.1's NativeCommandError; returns
-       @{ Output=<lines>; ExitCode=<n> }. #>
-    param([Parameter(Mandatory)][string]$WorkDir, [Parameter(Mandatory)][string[]]$CargoArgs)
-    Push-Location $WorkDir
-    $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    try {
-        $out = & cargo @CargoArgs 2>&1 | ForEach-Object { "$_" }
-        return @{ Output = $out; ExitCode = $LASTEXITCODE }
-    } finally { $ErrorActionPreference = $old; Pop-Location }
-}
-
-function Invoke-SimExample {
-    <#
-      Build+run an sm64-sim-rs example (the CPU simulator side). Returns captured output lines.
-      e.g. Invoke-SimExample -Name selftest -Release
-    #>
-    param([Parameter(Mandatory)][string]$Name, [string[]]$ExtraArgs=@(), [switch]$Release)
-    $io = Join-Path $script:SimRoot 'sm64-sim-rs'
-    $a = @('run')
-    if ($Release) { $a += '--release' }
-    $a += @('-p','sm64-sim-io','--example', $Name)
-    if ($ExtraArgs.Count) { $a += @('--') + $ExtraArgs }
-    $r = Invoke-Cargo -WorkDir $io -CargoArgs $a
-    if ($r.ExitCode -ne 0) { Write-Warning "cargo exited $($r.ExitCode)" }
-    $r.Output
-}
-
-function Get-SimExamples {
-    param()
-    $dir = Join-Path $script:SimRoot 'sm64-sim-rs\crates\sm64-sim-io\examples'
-    if (-not (Test-Path $dir)) { return @() }
-    Get-ChildItem $dir -Filter *.rs | ForEach-Object { $_.BaseName }
-}
-
-function Invoke-SimBruteforce {
-    <#
-      Build+run a GPU bruteforcer binary from sm64-gpu-handover/spirv_run.
-      Env passthrough: GEN, BATCHES, OUT, TX/TY/TZ, FULL_VERIFY (set via -EnvVars @{GEN=300}).
-      NOTE: the first build compiles the rust-gpu backend and is slow.
-    #>
-    param(
-        [ValidateSet('flying_bruteforce','guided_flying_bruteforce','flying_collision_bruteforce',
-                     'guided_flying_collision_bruteforce','guided_flight_refine','flight_replay')]
-        [string]$Bin = 'guided_flying_bruteforce',
-        [hashtable]$EnvVars = @{},
-        [string[]]$BinArgs = @(),
-        [switch]$BuildOnly
-    )
-    $probe = Join-Path $script:SimRoot 'sm64-gpu-handover\spirv_probe'
-    $run   = Join-Path $script:SimRoot 'sm64-gpu-handover\spirv_run'
-    if (-not (Test-Path $run)) { throw "spirv_run not found under $script:SimRoot" }
-    # build the .spv first (first build compiles the rust-gpu backend and is slow)
-    $b = Invoke-Cargo -WorkDir $probe -CargoArgs @('build','--release')
-    $b.Output | Write-Output
-    if ($BuildOnly) { return }
-    foreach ($k in $EnvVars.Keys) { Set-Item -Path "Env:$k" -Value ([string]$EnvVars[$k]) }
-    $a = @('run','--release','--bin',$Bin)
-    if ($BinArgs.Count) { $a += @('--') + $BinArgs }
-    (Invoke-Cargo -WorkDir $run -CargoArgs $a).Output
-}
-
 function Clear-MupenSessions {
     <#
       .SYNOPSIS  Delete ephemeral session\run_* IPC scratch dirs (cmd/resp.jsonl, logs) to reclaim disk.
@@ -811,64 +740,34 @@ function Clear-MupenSessions {
     [pscustomobject]@{ Removed = $kill.Count; Kept = ($all.Count - $kill.Count) }
 }
 
-function Confirm-Movie {
+function Invoke-Replay {
     <#
-      .SYNOPSIS  THE verify gate: replay a COMPLETE movie on mupen and report the whole result.
-                 Never call a built run "good" until this passes. Counts red coins by POSITION
-                 (red_coins RAM reads 0 on the JP rom), tracks mount/shell-kept/void/DUR.
-      .PARAMETER Sticks   Path to a full-movie [[x,y,btn],...] json (from the .st, incl. pre-mount prefix). btn bit 0x0080 = A.
-      .PARAMETER Savestate  Starting .st (default = Task 3 on-foot start).
-      .PARAMETER Margin   Coin-distance margin (matches the sim's coin_margin; default 0).
-      .OUTPUTS  PSCustomObject: Mounted, MountFrame, ShellKept, Coins (count), CoinSlots, VoidFrame, Dur, Frames, Ok
+      .SYNOPSIS  Replay a movie made by export_run on a fresh mupen from its .st and return Mario's final state:
+                 compare it with the state the run ended on (or with the headless engine) to prove the movie.
+      .PARAMETER Sticks     The movie's [[x,y,btn],...] json (export_run writes it beside the .m64), or the .m64 path.
+      .PARAMETER Savestate  Starting .st (default: the .st beside the movie).
     #>
-    param(
-        [Parameter(Mandatory)][string]$Sticks,
-        [string]$Savestate = $script:DefaultSt,
-        [double]$Margin = 0.0,
-        [double]$RequireCoins = 5
-    )
-    if (-not (Test-Path $Sticks)) { throw "Sticks file not found: $Sticks" }
-    $objPath = Join-Path $script:SimRoot 'sm64-sim-rs\crates\sm64-sim-io\tests\data\objective.json'
-    if (-not (Test-Path $objPath)) { throw "objective.json not found: $objPath" }
-    $obj = Get-Content $objPath -Raw | ConvertFrom-Json
-    $coins = $obj.coins; $mr = $obj.mario_hitbox_radius; $mh = $obj.mario_hitbox_height; $voidY = $obj.void_out_y
-    $seq = Get-Content $Sticks -Raw | ConvertFrom-Json
-    $RIDE = 0x10000
-    $collected = @{}; foreach ($c in $coins) { $collected[[int]$c.slot] = $false }
+    param([Parameter(Mandatory)][string]$Sticks, [string]$Savestate)
+    if ($Sticks -like '*.m64') { $Sticks = [System.IO.Path]::ChangeExtension($Sticks, '.sticks.json') }
+    if (-not (Test-Path $Sticks)) { throw "movie inputs not found: $Sticks" }
+    if (-not $Savestate) { $Savestate = ($Sticks -replace '\.sticks\.json$', '.st') }
+    if (-not (Test-Path $Savestate)) { throw "savestate not found: $Savestate" }
+    $seq = ConvertFrom-Json (Get-Content $Sticks -Raw)           # (as a parameter: piped, PowerShell 5.1 wraps the whole array in one item)
     $s = Start-Mupen -Savestate $Savestate
     try {
-        $mountFrame = -1; $voidFrame = -1; $shellKept = $true; $everMounted = $false
-        for ($i = 0; $i -lt $seq.Count; $i++) {
-            $st = $seq[$i]
-            $btn = @{ X = [int]$st[0]; Y = [int]$st[1] }
-            if ((([int]$st[2]) -band 0x0080) -ne 0) { $btn.A = $true }
-            Step-Frames -Session $s -Count 1 -Buttons $btn | Out-Null
-            $m = Get-MarioState -Session $s
-            $riding = ($m.action -band $RIDE) -ne 0
-            if ($riding -and -not $everMounted) { $everMounted = $true; $mountFrame = $i + 1 }
-            if ($everMounted -and $voidFrame -lt 0 -and -not $riding) { $shellKept = $false }
-            # count red coins by position (coin_distance <= 0), only while riding
-            if ($riding) {
-                foreach ($c in $coins) {
-                    if ($collected[[int]$c.slot]) { continue }
-                    $dx = $m.pos_x - $c.x; $dz = $m.pos_z - $c.z
-                    $r = [math]::Max($mr + $c.hitbox_radius - $Margin, 1.0)
-                    $dxz = [math]::Sqrt($dx*$dx + $dz*$dz) - $r
-                    $dy = [math]::Max($c.y - ($m.pos_y + $mh), $m.pos_y - ($c.y + $c.hitbox_height))
-                    if ([math]::Max($dxz,0) + [math]::Max($dy,0) -le 0) { $collected[[int]$c.slot] = $true }
-                }
-            }
-            if ($everMounted -and $m.pos_y -lt $voidY) { $voidFrame = $i + 1; break }
+        $m = $null; $i = 0
+        while ($i -lt $seq.Count) {
+            $f = $seq[$i]; $n = 1
+            while ($i + $n -lt $seq.Count -and (($seq[$i + $n] -join ',') -eq ($f -join ','))) { $n++ }
+            $btn = [int]$(if ($f.Count -gt 2) { $f[2] } else { 0 })
+            $b = @{ X = [int]$f[0]; Y = [int]$f[1] }
+            if ($btn -band 0x80) { $b.A = $true }; if ($btn -band 0x40) { $b.B = $true }; if ($btn -band 0x20) { $b.Z = $true }
+            if ($btn -band 0x10) { $b.start = $true }; if ($btn -band 0x08) { $b.R = $true }; if ($btn -band 0x04) { $b.L = $true }
+            $m = Step-Frames $s -Frames $n -Buttons $b
+            $i += $n
         }
-        $slots = @($collected.Keys | Where-Object { $collected[$_] } | Sort-Object)
-        $ncoins = $slots.Count
-        $dur = if ($mountFrame -ge 0 -and $voidFrame -ge 0) { $voidFrame - $mountFrame } else { -1 }
-        $ok = ($everMounted -and $shellKept -and $ncoins -ge $RequireCoins -and $voidFrame -ge 0)
-        [pscustomobject]@{
-            Ok = $ok; Mounted = $everMounted; MountFrame = $mountFrame; ShellKept = $shellKept
-            Coins = $ncoins; CoinSlots = ($slots -join ','); VoidFrame = $voidFrame; Dur = $dur; Frames = $seq.Count
-        }
-    } finally { Stop-Mupen -Session $s }
+        [pscustomobject]@{ Frames = $seq.Count; Savestate = $Savestate; State = $m }
+    } finally { Stop-Mupen $s }
 }
 
 function Invoke-Drive {
@@ -1854,7 +1753,7 @@ function ConvertTo-OctagonSticks {
                  (T=160 => diagonal notch ~80). Values are scaled RADIALLY (direction preserved); the game
                  clamps stick magnitude to 64 so maxed sticks are behaviourally unchanged, but tiny rounding
                  on off-axis frames can still shift a razor-precise ending by a frame or two -- always re-verify
-                 with Confirm-Movie after exporting.
+                 with Invoke-Replay after exporting.
       .PARAMETER Sticks  Array of [x,y,btn] OR a path to such a json.
       .PARAMETER T       Diagonal bound (default 160 => notch 80). Larger = looser gate, fewer frames changed.
       .PARAMETER Cardinal  Axis bound (default 127).

@@ -7,7 +7,6 @@ human drive all three SM64 tools in this workspace programmatically, with nothin
 |------|-----------|-------------------|
 | **mupen64-rr-lua** | the real, cycle-accurate N64 emulator (`mupen64-rr-lua/build/out/mupen64.exe`) | a Lua **bridge server** running inside it + a PowerShell SDK that launches it and talks over files |
 | **STROOP** | the SM64 RAM inspector (`STROOP/.../STROOP.exe`), whose real value is its **curated variable/formula database** | we parse STROOP's `Config/*Data.xml` and **compute every variable from live RAM** (read through the mupen bridge) — STROOP, headless |
-| **aitest2-improved** | a Rust SM64 physics sim (`sm64-sim-rs`) + GPU input bruteforcers (`sm64-gpu-handover`) | a PowerShell wrapper that builds/runs its examples and bruteforcers and parses their output |
 
 Everything lives here and is **never committed or pushed**, and never edits the `mupen64-rr-lua/`,
 `STROOP/` or `sm64/` source trees (the one exception is a stale sim example we repaired — see §4).
@@ -25,15 +24,6 @@ tas/control/
 ├─ session/                # per-run IPC scratch dirs (cmd.jsonl / resp.jsonl / bridge.log)
 └─ HOW_IT_WORKS.md         # this file
 ```
-
-## Toolchain on this machine (what's available, what's not)
-
-- **Rust / cargo** ✅ (builds the sim). **PowerShell 5.1** ✅ (the SDK + MCP host).
-- **.NET 8 runtime** ✅ (runs the prebuilt `STROOP.exe`) but **no .NET SDK** — cannot compile new C#.
-- **No Python, no Node, no standalone Lua.** That's why the SDK and MCP are PowerShell, and the
-  in-emulator half is Lua (mupen embeds it).
-
----
 
 ## 1. Quick start
 
@@ -161,70 +151,11 @@ To add more variables, point `Get-StroopVars -Files @('MarioData.xml','ObjectDat
 
 ---
 
-## 4. aitest2-improved — Rust CPU sim + GPU bruteforcers
+## The MCP server
 
-Two faces, both wrapped in the SDK:
-
-**A. CPU simulator library** (`sm64-sim-rs`, crates `sm64-sim-core` + `sm64-sim-io`, ~16 examples).
-`Get-SimExamples` lists them; `Invoke-SimExample -Name <ex> -Release` builds+runs one and returns
-its output. Highlights: `selftest` (reproduces the verified Task-3 run end-to-end with **no
-emulator** — 371 frames, 5 red coins), `blj_probe`, `camera_diff`, `ttm_probe`, `route_planner`,
-`leg_solver`, `mount_search`, `tas_standalone`. *(We repaired `selftest.rs`: `find_floor` now
-returns `(Option<Surface>, f32)` instead of an out-param — the only source edit outside `control/`.)*
-
-**B. GPU bruteforcers** (`sm64-gpu-handover/spirv_run`, needs a **Vulkan** GPU).
-`Invoke-SimBruteforce -Bin <bin> -EnvVars @{ GEN=300 }` builds the `.spv` (first build compiles the
-rust-gpu backend, ~3 min) then runs a bruteforcer. Bins: `guided_flying_bruteforce`,
-`guided_flying_collision_bruteforce` (the real tool — guided + full collision),
-`guided_flight_refine` (improves a real `.flight`), `flight_replay`, and the random-search variants.
-Env passthrough: `GEN` (generations), `BATCHES`, `OUT`, `TX/TY/TZ` (target), `FULL_VERIFY`.
-See `aitest2-improved/USAGE.md` for the search theory.
-
-> **Known limitation (this machine):** the wrapper builds and launches the GPU bruteforcers
-> correctly and the GPU is detected (`GPU: NVIDIA GeForce RTX 5070`, Vulkan), but the **first
-> compute dispatch crashes with STATUS_ACCESS_VIOLATION** on the RTX 5070 (Blackwell). Precise
-> diagnosis for whoever fixes it: `spirv_run` uses **wgpu 30 + `Features::PASSTHROUGH_SHADERS`** and
-> feeds the prebuilt **`probe_shaders.spv`** raw to the driver via `create_shader_module_passthrough`
-> (see `guided_flying_bruteforce.rs:104-125`). Raw rust-gpu SPIR-V handed straight to a brand-new
-> Blackwell driver is the likely culprit — try in order: **(1) update the NVIDIA driver**, (2) bump
-> `wgpu`/`cargo-gpu` and **regenerate `probe_shaders.spv`**, (3) as a test, drop `PASSTHROUGH_SHADERS`
-> and let naga validate/translate the SPIR-V. This is independent of the control layer (the
-> throughput figures in older notes predate this GPU). The **CPU simulator uses the same
-> physics/collision** and is fully validated (`selftest` passes) — use it as the search path meanwhile.
-
----
-
-## 5. The MCP server (for future interactive sessions)
-
-`mcp/sm64_mcp_server.ps1` is a **stdio JSON-RPC MCP server** that exposes 16 tools
-(`start_mupen, stop_mupen, get_state, step_frames, read_mem, write_mem, save_memstate,
-load_memstate, stroop_vars, invoke_action, list_actions, screenshot, sim_example, sim_examples,
-sim_bruteforce, paths`) — a thin dispatcher over the SDK that keeps the live mupen session across
-calls. Protocol validated (initialize / tools/list / tools/call).
-
-**MCP servers cannot be hot-added to a running session.** Register it, then start a new session:
-
-```
-claude mcp add sm64 -- powershell -NoProfile -ExecutionPolicy Bypass -File "<abs>\tas\control\mcp\sm64_mcp_server.ps1"
-```
-
-or copy the `sm64` entry from `mcp/mcp.json` into your project/user `.mcp.json`.
-
-Until then, the **SM64Ctl SDK is the way to drive everything right now** (from any PowerShell, or
-from Claude via the PowerShell/Bash tools).
-
----
-
-## 6. Verified evidence (all run on this machine)
-
-- mupen: bridge handshake OK; live `Get-MarioState` shows Mario **riding a shell in TTM (course 12)**
-  at `(1534.94, 2309.53, 548.34)`; `global_timer` advances exactly with `Step-Frames`.
-- input injection: stick +127 vs −127 for 20 frames from one checkpoint diverge by `dz≈441` units.
-- savestates: `Save-MemState`/`Load-MemState` restore **EXACT**; determinism when paused is **STABLE**;
-  a 15-frame input replay is **BIT-IDENTICAL** across two runs.
-- STROOP: 99 variables computed live; `X`/`Z` **EXACT** match the emulator's position.
-- sim: `blj_probe`, `camera_diff` run; `selftest` **PASSES** (5/5 coins, frame 371, no emulator).
-- MCP: `initialize` → `sm64ctl`; `tools/list` → 16 tools; `tools/call paths` → `MupenExists=True`.
+`mcp/sm64_mcp_server.ps1` is a **stdio JSON-RPC MCP server**, a thin dispatcher over the SDK that keeps the live
+mupen session across calls. INSTALL.bat registers it (Claude Code, Gemini CLI, `mcp.json` for other clients); MCP
+servers load when the AI client starts, so restart it after registering.
 
 ## 7. Troubleshooting
 
