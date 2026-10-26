@@ -19,3 +19,7 @@ status.json
 .idea/
 .DS_Store
 Thumbs.db
+config.json
+mcp.json
+bin/
+movies/

@@ -310,7 +310,7 @@ handlers.replaylist = function(a, id)
   if type(a.samples) == "table" then for _, i in ipairs(a.samples) do samp[tonumber(i)] = true end end
   replay = { frames = fr, i = 0, n = #fr, samp = samp, sampleAll = (a.sampleall == true),
              out = {}, id = id, stopstars = tonumber(a.stopstars), autob = {} }
-  -- REPLAY_SPEED_MODE / REPLAY_SPEED_PCT (globals, reglables via Invoke-MupenLua) : 0 + 100 = temps reel visible
+  -- REPLAY_SPEED_MODE / REPLAY_SPEED_PCT (globals, settable via Invoke-MupenLua): 0 + 100 = real time, visible
   emu.set_speed_mode(REPLAY_SPEED_MODE or 1); pcall(function() emu.speed(REPLAY_SPEED_PCT or 5000) end)
   set_paused(false)
   return nil          -- deferred; completed in atinput
@@ -493,8 +493,8 @@ emu.atinput(function()
     replay.i = replay.i + 1
     local fr = replay.frames[replay.i]
     local bt = fr[3] or 0
-    -- bit 0x100 = "auto B" : B seulement si Mario est stationnaire (idle, fin d'atterrissage...), hors
-    -- punch, et si B n'etait pas presse a la frame precedente -> cadence de punch optimale (1 punch / 16 f)
+    -- bit 0x100 = "auto B": B only if Mario is stationary (idle, end of a landing...), outside
+    -- punch, and if B was not pressed on the previous frame -> optimal punch rate (1 punch / 16 f)
     if (math.floor(bt/256) % 2) == 1 then
       bt = bt % 256
       local act = memory.readdword(MARIO + 0x0C)

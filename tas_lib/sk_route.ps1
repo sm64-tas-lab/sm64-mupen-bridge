@@ -12,10 +12,10 @@ function Route([string]$mode) {
     $btn = 0
     if ($i -lt 3) { } elseif ($i -eq 3) { $btn = 0x20 }
     elseif ($i -eq 4) { $btn = $(if ($mode -eq 'sk') { 0x40 } else { 0xA0 }); $etape = $(if ($mode -eq 'sk') { 1 } else { 3 }) }
-    elseif ($etape -eq 1 -and $low -eq 0x05A) { $btn = 0x80; $etape = 2; $log += "i$i rollout" }          # glissade SK -> A une fois
-    elseif ($etape -eq 2 -and -not $air -and $i -gt 6) { $btn = 0x20; $etape = 21; $log += "i$i Z" }  # atterrissage rollout -> Z
-    elseif ($etape -eq 21) { $btn = 0xA0; $etape = 3; $log += "i$i LJ" }                              # puis A -> long jump
-    elseif ($etape -eq 3 -and $act -eq 0x479) { $btn = 0xA0; $etape = 4; $log += "i$i LJ2" }          # atterrissage LJ -> Z+A une fois
+    elseif ($etape -eq 1 -and $low -eq 0x05A) { $btn = 0x80; $etape = 2; $log += "i$i rollout" }          # SK slide -> A once
+    elseif ($etape -eq 2 -and -not $air -and $i -gt 6) { $btn = 0x20; $etape = 21; $log += "i$i Z" }  # rollout landing -> Z
+    elseif ($etape -eq 21) { $btn = 0xA0; $etape = 3; $log += "i$i LJ" }                              # then A -> long jump
+    elseif ($etape -eq 3 -and $act -eq 0x479) { $btn = 0xA0; $etape = 4; $log += "i$i LJ2" }          # LJ landing -> Z+A once
     elseif ($etape -eq 4 -and $act -eq 0x479) { $btn = 0xA0; $etape = 5; $log += "i$i LJ3" }
     elseif ($etape -ge 3) { $btn = 0x20 }
     $fr += , @($a[0], $a[1], $btn)
@@ -26,6 +26,6 @@ function Route([string]$mode) {
 }
 foreach ($mode in 'lj', 'sk') {
   $r = Route $mode
-  "$mode : dans le tableau apres $($r.n) frames | actions: $($r.log -join ', ') | " + (Fmt $r.m)
+  "$mode : in the painting after $($r.n) frames | actions: $($r.log -join ', ') | " + (Fmt $r.m)
   @{ frames = $r.fr } | ConvertTo-Json -Depth 5 | Set-Content "$PSScriptRoot\route_$mode.json"
 }

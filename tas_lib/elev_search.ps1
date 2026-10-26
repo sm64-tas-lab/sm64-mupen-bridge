@@ -1,10 +1,10 @@
-# Recherche de l'arrivee sur l'elevateur depuis c2a_passage.st : attente w, marche k frames vers l'ouest,
-# Z, Z+A (LJ vers l'ouest), stick arriere (est) + Z jusqu'a l'atterrissage. Critere : 0x479 sur la plateforme
-# (x > 1680, y > 300, vitesse < 0). Arret au premier succes (par lots, w croissant).
+# Search for the arrival on the elevator from c2a_passage.st: wait w, walk k frames west,
+# Z, Z+A (LJ to the west), back stick (east) + Z until landing. Criterion: 0x479 on the platform
+# (x > 1680, y > 300, speed < 0). Stop at the first success (in batches, w increasing).
 . "$PSScriptRoot\freerun.ps1"
 $d = if ($env:MOVIE_CHOMP_DIR) { $env:MOVIE_CHOMP_DIR } else { Join-Path $PSScriptRoot '..\MOVIE_CHOMP' }
 Use-Milestone "$d/c2a_passage.st" 27; $cy = CamYaw
-# vise le centre de la plateforme P127 (1680,4466) depuis l'arret apres l'atterrissage (~2207,4373)
+# aims at the center of platform P127 (1680,4466) from the stop after landing (~2207,4373)
 $aim = YawTo 2207 4373 1680 4466; $W = StickRaw $aim $cy; $E = StickRaw (Wrap ($aim + 32768)) $cy
 $trials = @(); $meta = @()
 foreach ($w in 80..110) { foreach ($k in 18, 20) { foreach ($jj in 4, 6, 8, 10, 12, 14) {
@@ -26,7 +26,7 @@ try {
             }
             if ($hit) { break }
         }
-        Write-Host ("essais {0}..{1} faits ; {2}" -f $i, $j, $(if ($hit) { "TROUVE w=$($hit.w) k=$($hit.k) atterrissage frame $($hit.f) pos=($($hit.pos[0]),$($hit.pos[1]),$($hit.pos[2]))" } else { 'rien' }))
+        Write-Host ("trials {0}..{1} done ; {2}" -f $i, $j, $(if ($hit) { "FOUND w=$($hit.w) k=$($hit.k) landing frame $($hit.f) pos=($($hit.pos[0]),$($hit.pos[1]),$($hit.pos[2]))" } else { 'nothing' }))
     }
 } finally { Stop-Pool $pool }
 if ($hit) { $hit | ConvertTo-Json -Depth 5 -Compress | Set-Content "$env:TEMP\elev_hit.json"; "SUCCES w=$($hit.w) k=$($hit.k)" } else { "aucun atterrissage sur la plateforme" }

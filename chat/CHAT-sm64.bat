@@ -1,8 +1,8 @@
 @echo off
 chcp 65001 >nul
-title CHAT SM64 - discute avec le modele
+title CHAT SM64 - chat with the model
 cd /d "%~dp0"
-echo Verifie que llama-server (lancer-Coder.bat) est allume...
+echo Check that llama-server (lancer-GLM.bat) is running...
 echo.
 python sm64_chat.py
 echo.

@@ -1,5 +1,5 @@
-# Approche SBLJ depuis Mario a l'arret (slot 10 = MOVIE_FREERUN/depart_idle.st) : arret au 1er resultat valide.
-# k frames vers D, t frames vers F (-8474 = 300 sous le parallele), Z, Z+A, puis stick arriere + Z jusqu'a l'atterrissage LJ.
+# SBLJ approach from Mario standing still (slot 10 = MOVIE_FREERUN/depart_idle.st): stop at the 1st valid result.
+# k frames toward D, t frames toward F (-8474 = 300 below parallel), Z, Z+A, then back stick + Z until the LJ landing.
 . "$PSScriptRoot\freerun.ps1"
 $F = -8474
 function TryApp([double]$D, [int]$k, [int]$t, [double]$th = 0) {

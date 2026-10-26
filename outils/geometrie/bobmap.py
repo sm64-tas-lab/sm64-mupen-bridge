@@ -30,6 +30,6 @@ for k,(x,z) in pts.items(): ax.plot(x,z,'r*',ms=14); ax.text(x+80,z+80,k,color='
 for (x,z) in [(-3080,-5200),(-1750,-2800),(-1400,-950),(-2650,1750),(-1900,3450),(2350,3700),(-3800,-460),(-3480,-2120)]:
     ax.plot(x,z,'ko',ms=8); ax.text(x+60,z-150,'bomb',fontsize=9)
 ax.set_xlim(X0,X1); ax.set_ylim(Z1,Z0); ax.set_aspect('equal'); ax.grid(alpha=0.3)
-ax.set_xlabel('x'); ax.set_ylabel('z (vers le bas = +z)')
-sm=plt.cm.ScalarMappable(cmap=cm,norm=plt.Normalize(0,4500)); plt.colorbar(sm,ax=ax,shrink=0.6,label='hauteur y')
+ax.set_xlabel('x'); ax.set_ylabel('z (down = +z)')
+sm=plt.cm.ScalarMappable(cmap=cm,norm=plt.Normalize(0,4500)); plt.colorbar(sm,ax=ax,shrink=0.6,label='height y')
 plt.savefig(os.path.join(tempfile.gettempdir(), "bobmap.png"),dpi=70,bbox_inches='tight')

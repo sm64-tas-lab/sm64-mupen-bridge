@@ -1,4 +1,4 @@
-# Lance N workers en parallele sur une liste d'essais ; renvoie les resultats (objets) quand tout est fini.
+# Runs N workers in parallel on a list of trials; returns the results (objects) when everything is done.
 function Invoke-Parallel([string]$Milestone, $Trials, [int]$N = 6, [string]$Tag = 'run') {
     $dir = Join-Path $env:TEMP "sm64par_$Tag"; Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory $dir | Out-Null
     $procs = @()

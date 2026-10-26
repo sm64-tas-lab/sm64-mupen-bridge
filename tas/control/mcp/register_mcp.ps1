@@ -1,26 +1,26 @@
 <#
-  register_mcp.ps1 — Enregistre automatiquement le serveur MCP SM64 dans Claude Code.
+  register_mcp.ps1 — Automatically registers the SM64 MCP server in Claude Code.
   Usage:
       powershell -ExecutionPolicy Bypass -File .\register_mcp.ps1
 #>
 $here = Split-Path -Parent $PSCommandPath
 $serverPs1 = (Resolve-Path (Join-Path $here 'sm64_mcp_server.ps1')).Path
 
-Write-Host "Serveur MCP détecté : $serverPs1" -ForegroundColor Cyan
+Write-Host "SM64 MCP server found: $serverPs1" -ForegroundColor Cyan
 
-# Vérifier si la CLI claude est installée
+# Check whether the claude CLI is installed
 $claudeCmd = Get-Command 'claude' -ErrorAction SilentlyContinue
 if ($claudeCmd) {
-    Write-Host "Enregistrement via 'claude mcp add sm64'..." -ForegroundColor Yellow
+    Write-Host "Registering via 'claude mcp add sm64'..." -ForegroundColor Yellow
     & claude mcp add sm64 -- powershell -NoProfile -ExecutionPolicy Bypass -File "$serverPs1"
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "Serveur MCP 'sm64' enregistré avec succès dans Claude !" -ForegroundColor Green
+        Write-Host "MCP server 'sm64' registered successfully in Claude!" -ForegroundColor Green
     }
 } else {
-    Write-Host "CLI 'claude' non trouvée dans le PATH." -ForegroundColor Yellow
+    Write-Host "'claude' CLI not found in PATH." -ForegroundColor Yellow
 }
 
-# Générer le snippet JSON
+# Generate the JSON snippet
 $jsonSnippet = [ordered]@{
     mcpServers = [ordered]@{
         sm64 = [ordered]@{
@@ -30,5 +30,5 @@ $jsonSnippet = [ordered]@{
     }
 } | ConvertTo-Json -Depth 5
 
-Write-Host "`nConfiguration à copier dans votre .mcp.json si nécessaire :" -ForegroundColor Cyan
+Write-Host "`nConfiguration to copy into your .mcp.json if needed:" -ForegroundColor Cyan
 Write-Host $jsonSnippet

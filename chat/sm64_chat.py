@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-CLI INTERACTIF pour discuter avec le modele local (Qwen3-Coder via llama-server) qui pilote mupen (SM64)
-via le serveur MCP. Tu tapes des taches en langage naturel, le modele repond et utilise les outils.
-Fiable : expose directement les bons outils (pas de ToolSearch / detecteur de boucle comme Qwen Code).
+INTERACTIVE CLI to chat with the local model (Qwen3-Coder via llama-server) that drives mupen (SM64)
+through the MCP server. You type tasks in natural language, the model replies and uses the tools.
+Reliable: it exposes the right tools directly (no ToolSearch / loop detector like Qwen Code).
 
-Pre-requis : llama-server allume ('lancer-Coder.bat').
-Lancer     : python sm64_chat.py     (ou double-clic sur CHAT-sm64.bat)
-Commandes  : /reset (efface la conversation)   /quit (quitter)
+Prerequisite: llama-server running ('lancer-GLM.bat').
+Run:          python sm64_chat.py     (or double-click CHAT-sm64.bat)
+Commands:     /reset (clear the conversation)   /quit (quit)
 """
 import json, os, subprocess, urllib.request, sys
 try:
-    sys.stdout.reconfigure(encoding="utf-8")   # accents francais lisibles dans le terminal
+    sys.stdout.reconfigure(encoding="utf-8")   # so accented characters display correctly in the terminal
     sys.stdin.reconfigure(encoding="utf-8")
 except Exception:
     pass
@@ -20,9 +20,9 @@ PROJECT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 LLM_URL = "http://127.0.0.1:8080/v1/chat/completions"
 PS1     = PROJECT + r"\tas\control\mcp\sm64_mcp_server.ps1"
 SAVEST  = os.environ.get("SM64_SAVESTATE", os.path.join(PROJECT, "30th Anniversary Task 4.st"))
-# Jeu d'outils HAUT NIVEAU expose au modele (lean = le modele ne se perd pas)
+# HIGH-LEVEL tool set exposed to the model (lean = the model does not get lost)
 KEEP = {"start_mupen", "scan", "list_chests", "goto", "open_chest", "collect", "grab_star", "move", "get_state", "export_run", "reset_run", "stop_mupen"}
-MAX_TOOL_STEPS = 20   # garde-fou anti-boucle par tour
+MAX_TOOL_STEPS = 20   # anti-loop guard per turn
 
 def llama_up():
     try: urllib.request.urlopen(LLM_URL.replace("/chat/completions","/models"), timeout=4); return True
@@ -66,40 +66,40 @@ def chat(msgs, tools):
     return d["choices"][0]["message"]
 
 import os
-# Le guide des outils est lu depuis OUTILS_SM64.md (a cote de ce script) : edite ce .md pour changer
-# les instructions du modele, sans toucher au code.
+# The tool guide is read from OUTILS_SM64.md (next to this script): edit that .md to change
+# the model's instructions, without touching the code.
 _GUIDE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "OUTILS_SM64.md")
 try:
     with open(_GUIDE, encoding="utf-8") as _f:
-        SYSTEM = _f.read().rstrip() + f"\n\n(Savestate Task 4 par defaut : {SAVEST})"
-    print(f"[guide] chargé depuis {_GUIDE}")
+        SYSTEM = _f.read().rstrip() + f"\n\n(Default Task 4 savestate: {SAVEST})"
+    print(f"[guide] loaded from {_GUIDE}")
 except Exception as _e:
-    SYSTEM = ("Tu pilotes Mario (SM64) via les outils 'sm64'. Appelle start_mupen d'abord (savestate absolu), "
-              "puis scan(filter='...') pour trouver une cible, collect(name='...') pour la ramasser (verifie "
-              "collected=true), goto(x,z) pour te deplacer. Reponds en francais, un outil a la fois.")
-    print(f"[guide] OUTILS_SM64.md introuvable ({_e}) — prompt par defaut")
+    SYSTEM = ("You drive Mario (SM64) through the 'sm64' tools. Call start_mupen first (absolute savestate), "
+              "then scan(filter='...') to find a target, collect(name='...') to pick it up (check "
+              "collected=true), goto(x,z) to move. Reply in French, one tool at a time.")
+    print(f"[guide] OUTILS_SM64.md not found ({_e}) — default prompt")
 
 def main():
     if not llama_up():
-        print("!! llama-server eteint (127.0.0.1:8080). Lance 'lancer-Coder.bat', attends 'model loaded', puis relance.")
+        print("!! llama-server is not running (127.0.0.1:8080). Start 'lancer-GLM.bat', wait for 'model loaded', then run again.")
         sys.exit(1)
     mcp=MCP(); mcp.init(); tools=oai(mcp.tools())
     print("="*64)
-    print("  CHAT SM64  —  discute avec le modele, il pilote mupen via le MCP")
+    print("  CHAT SM64  —  chat with the model, it drives mupen via the MCP")
     print("  Outils:", ", ".join(sorted(t['function']['name'] for t in tools)))
-    print("  Commandes: /reset  /quit")
-    print("  Exemples: 'demarre la task 4 et va au coffre 1' | 'scan autour de mario' | 'ouvre le coffre 2 en long jumps'")
+    print("  Commands: /reset  /quit")
+    print("  Examples: 'start task 4 and go to chest 1' | 'scan around mario' | 'open chest 2 with long jumps'")
     print("="*64)
     msgs=[{"role":"system","content":SYSTEM}]
     try:
         while True:
-            try: user=input("\nToi> ").strip()
+            try: user=input("\nYou> ").strip()
             except EOFError: break
             if not user: continue
             if user in ("/quit","/exit","quit","exit"): break
-            if user=="/reset": msgs=[{"role":"system","content":SYSTEM}]; print("(conversation reinitialisee)"); continue
+            if user=="/reset": msgs=[{"role":"system","content":SYSTEM}]; print("(conversation reset)"); continue
             msgs.append({"role":"user","content":user})
-            seen_calls={}   # anti-boucle: compte les appels (outil+args) identiques dans CE tour
+            seen_calls={}   # anti-loop: counts identical calls (tool+args) in THIS turn
             for _ in range(MAX_TOOL_STEPS):
                 msg=chat(msgs,tools); content=msg.get("content") or ""; tcs=msg.get("tool_calls") or []
                 if content.strip(): print("\nModele>", content.strip())
@@ -110,32 +110,32 @@ def main():
                     fn=tc["function"]; name=fn["name"]
                     try: args=json.loads(fn["arguments"]) if isinstance(fn["arguments"],str) else fn["arguments"]
                     except: args=fn["arguments"] or {}
-                    print(f"   [outil] {name}({json.dumps(args, ensure_ascii=False)[:100]})")
+                    print(f"   [tool] {name}({json.dumps(args, ensure_ascii=False)[:100]})")
                     sig=name+"|"+json.dumps(args,sort_keys=True,ensure_ascii=False)
                     seen_calls[sig]=seen_calls.get(sig,0)+1
-                    # anti-boucle: un outil READ-ONLY rappele avec les MEMES args donne un resultat IDENTIQUE
-                    # (Mario n'a pas bouge). On court-circuite au 2e (read-only) / 3e (tout outil) appel identique
-                    # et on POUSSE le modele a changer d'approche ou a repondre, au lieu de tourner en rond.
+                    # anti-loop: a READ-ONLY tool called again with the SAME args returns an IDENTICAL result
+                    # (Mario did not move). We short-circuit on the 2nd (read-only) / 3rd (any tool) identical call
+                    # and PUSH the model to change approach or reply, instead of going round in circles.
                     ro = name in ("scan","get_state","list_chests")
                     if (ro and seen_calls[sig]>=2) or seen_calls[sig]>=3:
                         res=json.dumps({"stop_repeat":True,"message":(
-                            f"Tu as DEJA appele {name} avec ces memes arguments ({seen_calls[sig]}x) et le resultat est "
-                            "IDENTIQUE (rien n'a change). ARRETE de repeter le meme outil. Deux options seulement: "
-                            "(1) CHANGE d'approche (near_x/near_z precis, goto, grab_star, move), ou "
-                            "(2) REPONDS a l'utilisateur (dis ce que tu as trouve, ou honnetement que la cible est "
-                            "inatteignable/bloquee). Ne rappelle PAS le meme outil avec les memes arguments.")},ensure_ascii=False)
-                        print(f"           -> [garde-fou anti-boucle: appel identique #{seen_calls[sig]} court-circuite]")
+                            f"You ALREADY called {name} with these same arguments ({seen_calls[sig]}x) and the result is "
+                            "IDENTICAL (nothing changed). STOP repeating the same tool. Only two options: "
+                            "(1) CHANGE approach (precise near_x/near_z, goto, grab_star, move), or "
+                            "(2) REPLY to the user (say what you found, or honestly that the target is "
+                            "unreachable/blocked). Do NOT call the same tool with the same arguments again.")},ensure_ascii=False)
+                        print(f"           -> [anti-loop guard: identical call #{seen_calls[sig]} short-circuited]")
                     else:
                         res=mcp.call(name,args)
                         print(f"           -> {res[:220]}")
                     msgs.append({"role":"tool","tool_call_id":tc.get("id",name),"content":res})
             else:
-                print("(garde-fou: trop d'appels d'outils dans ce tour, je rends la main)")
+                print("(guard: too many tool calls in this turn, handing control back)")
     finally:
         try: mcp.call("stop_mupen")
         except: pass
         mcp.close()
-        print("\nA bientot.")
+        print("\nSee you soon.")
 
 if __name__ == "__main__":
     main()

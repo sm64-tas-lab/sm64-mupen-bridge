@@ -1,15 +1,15 @@
-# Freerun (SBLJ -> wall kick -> BLJ autre escalier -> tableau). Charge lib.ps1.
+# Freerun (SBLJ -> wall kick -> BLJ on the other staircase -> painting). Loads lib.ps1.
 . "$PSScriptRoot\lib.ps1"
 function Wrap([double]$a) { while ($a -gt 32767) { $a -= 65536 }; while ($a -lt -32768) { $a += 65536 }; $a }
-# stick brut pour la direction monde $Dir avec la camera $cy, en compensant la zone morte SM64 (-6 par axe)
+# raw stick for world direction $Dir with camera $cy, compensating the SM64 dead zone (-6 per axis)
 function StickRaw([double]$Dir, [double]$cy, [double]$mag = 1) {
     $t = ($Dir - $cy) / 65536 * 2 * [math]::PI
     $out = @(); foreach ($p in @((121 * $mag * [math]::Sin($t)), (-121 * $mag * [math]::Cos($t)))) {
         $q = [int][math]::Round($p); if ([math]::Abs($q) -lt 2) { $out += 0 } else { $out += [math]::Max(-127, [math]::Min(127, $q + 6 * [math]::Sign($q))) } }
     $out
 }
-# Drive : cmds = liste de @(dir|$null, boutons). Corrige la camera frame par frame via intended_yaw (rejeux).
-# Renvoie frames (inputs) + etats. Rejoue toujours depuis le slot (deterministe).
+# Drive: cmds = list of @(dir|$null, buttons). Corrects the camera frame by frame via intended_yaw (replays).
+# Returns frames (inputs) + states. Always replays from the slot (deterministic).
 function Drive([int]$Slot, $prefix, $cmds, [int]$iters = 4) {
     $n = $cmds.Count; $np = @($prefix).Count
     if ($np -gt 0) { RunFrom $Slot @($prefix) | Out-Null } else { Load-MemState $s -Slot $Slot | Out-Null }; $c0 = CamYaw
@@ -22,13 +22,13 @@ function Drive([int]$Slot, $prefix, $cmds, [int]$iters = 4) {
         for ($i = 0; $i -lt $n; $i++) { $c = $cmds[$i]; $ms = $r[$np + $i].s
             if ($null -ne $c[0]) { $e = Wrap ($c[0] - $ms.intended_yaw); $err = [math]::Max($err, [math]::Abs($e)); $cam[$i] = Wrap ($cam[$i] - $e); $last = $cam[$i] }
             elseif ($i + 1 -lt $n) { $cam[$i + 1] = $cam[$i] } }
-        # propage l'estimation aux frames suivantes non encore vues
+        # propagate the estimate to the following frames not yet seen
         if ($err -lt 24) { break }
     }
     [pscustomobject]@{ frames = $all; own = $fr; states = $r; err = $err }
 }
-# chaine SBLJ gloutonne depuis un prefixe (slot) : a chaque cycle (Z+A+cote, Z+cote), garde la direction qui laisse Mario
-# en atterrissage LJ sur la marche basse (y<1) ; choisit la distance a la contremarche la plus proche de DC.
+# greedy SBLJ chain from a prefix (slot): each cycle (Z+A+side, Z+side) keeps the direction that leaves Mario
+# landing a LJ on the low step (y<1); picks the distance to the riser closest to DC.
 function ChainSBLJ([int]$Slot, $prefix, [int]$maxCycles = 10, [double]$DC = 1.5, $dirs = @(-40000..-26000 | ? { $_ % 1000 -eq 0 })) {
     $cur = @($prefix); $vs = @()
     for ($c = 0; $c -lt $maxCycles; $c++) {
@@ -46,8 +46,8 @@ function ChainSBLJ([int]$Slot, $prefix, [int]$maxCycles = 10, [double]$DC = 1.5,
     [pscustomobject]@{ frames = $cur; vs = $vs }
 }
 function YawTo([double]$x, [double]$z, [double]$tx, [double]$tz) { [int]([math]::Atan2($tx - $x, $tz - $z) / (2 * [math]::PI) * 65536) }
-# Navigation en boucle fermee par rejeux : waypoints [x,z,rayon] ; stick vers le waypoint courant (position de la frame precedente)
-# ; apres le dernier waypoint, neutre a partir de la frame ou la distance restante < $stop. N frames au total.
+# Closed-loop navigation by replays: waypoints [x,z,radius]; stick toward the current waypoint (position of the previous frame)
+# ; after the last waypoint, neutral from the frame where the remaining distance < $stop. N frames in total.
 function Nav([int]$Slot, $prefix, $wps, [int]$N, [double]$stop = 0, [int]$iters = 4) {
     $cmds = @(); for ($i = 0; $i -lt $N; $i++) { $cmds += , @((YawTo 0 0 $wps[0][0] $wps[0][1]), 0) }
     $dr = $null
@@ -65,8 +65,8 @@ function Nav([int]$Slot, $prefix, $wps, [int]$N, [double]$stop = 0, [int]$iters 
     }
     Drive $Slot $prefix $cmds 4
 }
-# pilotage glouton : blocs de $chunk frames, direction vers le waypoint courant depuis la position reelle ; les blocs choisis sont figes.
-# s'arrete (neutre) quand la distance au dernier waypoint < $stop ; renvoie les frames brutes (prefixe inclus).
+# greedy steering: blocks of $chunk frames, direction toward the current waypoint from the real position; chosen blocks are frozen.
+# stops (neutral) when the distance to the last waypoint < $stop; returns the raw frames (prefix included).
 function NavGreedy([int]$Slot, $prefix, $wps, [int]$maxFrames = 200, [double]$stop = 0, [int]$chunk = 4) {
     $cur = @($prefix); $w = 0
     while (($cur.Count - @($prefix).Count) -lt $maxFrames) {
@@ -81,7 +81,7 @@ function NavGreedy([int]$Slot, $prefix, $wps, [int]$maxFrames = 200, [double]$st
     }
     $cur
 }
-# BLJ d'escalier en machine a etats : a chaque frame, si Mario est en atterrissage LJ (0x479) -> Z+A+stick arriere, sinon Z+stick arriere.
+# Staircase BLJ as a state machine: each frame, if Mario is landing a LJ (0x479) -> Z+A+back stick, otherwise Z+back stick.
 function BLJMachine([int]$Slot, $prefix, [double]$backDir, [int]$maxFrames = 40, [double]$stopY = 205, [int]$delay = 0) {
     $cur = @($prefix); $log = @(); $seen = 0
     for ($i = 0; $i -lt $maxFrames; $i++) {
@@ -93,7 +93,7 @@ function BLJMachine([int]$Slot, $prefix, [double]$backDir, [int]$maxFrames = 40,
     }
     [pscustomobject]@{ frames = $cur; log = $log }
 }
-# BLJ escalier droit du hall : A seulement si la prochaine contremarche (x - z = -97 + 72.5 k) est a moins de $fac*|v| (et pas A a la frame d'avant)
+# Hall straight-staircase BLJ: A only if the next riser (x - z = -97 + 72.5 k) is within $fac*|v| (and not A on the previous frame)
 function RiserDist($m) { $u = $m.pos_x - $m.pos_z; $k = [math]::Floor(($u + 97) / 72.5) + 1; ((-97 + 72.5 * $k) - $u) / 1.41421356 }
 function BLJRight([int]$Slot, $prefix, [double]$backDir = 24236, [int]$maxFrames = 45, [double]$fac = 1.1) {
     $cur = @($prefix); $log = @()
@@ -106,8 +106,8 @@ function BLJRight([int]$Slot, $prefix, [double]$backDir = 24236, [int]$maxFrames
     }
     [pscustomobject]@{ frames = $cur; log = $log }
 }
-# pilotage en marche ARRIERE (hypervitesse) : Mario recule a l'oppose du stick -> stick = direction voulue + 0x8000.
-# blocs de $chunk frames ; s'arrete (renvoie) quand la distance au dernier waypoint < $stop ou si la vitesse > -$minV.
+# steering in REVERSE (hyperspeed): Mario backs away opposite the stick -> stick = wanted direction + 0x8000.
+# blocks of $chunk frames; stops (returns) when the distance to the last waypoint < $stop or the speed > -$minV.
 function NavBack([int]$Slot, $prefix, $wps, [int]$maxFrames = 60, [double]$stop = 0, [int]$chunk = 2, [double]$minV = 5) {
     $cur = @($prefix); $w = 0
     while (($cur.Count - @($prefix).Count) -lt $maxFrames) {
@@ -122,8 +122,8 @@ function NavBack([int]$Slot, $prefix, $wps, [int]$maxFrames = 60, [double]$stop 
     }
     $cur
 }
-# BLJ escalier droit avec pause buffer : A seulement si la contremarche suivante est a portee (rd < fac*|v|).
-# A partir du $bufFrom-ieme A : bloc A+Z+Start, Z, Z+Start, Z (1 frame de jeu, puis pause) -> un LJ par frame de jeu.
+# Straight-staircase BLJ with buffered pause: A only if the next riser is in range (rd < fac*|v|).
+# From the $bufFrom-th A on: block A+Z+Start, Z, Z+Start, Z (1 game frame, then pause) -> one LJ per game frame.
 function BLJBuffered([int]$Slot, $prefix, [double]$backDir, [int]$maxGame = 40, [double]$fac = 1.1, [int]$bufFrom = 3) {
     $cur = @($prefix); $log = @(); $nA = 0
     for ($g = 0; $g -lt $maxGame; $g++) {
@@ -140,8 +140,8 @@ function BLJBuffered([int]$Slot, $prefix, [double]$backDir, [int]$maxGame = 40, 
     }
     [pscustomobject]@{ frames = $cur; log = $log }
 }
-# ---- escalier DROIT (miroir de l'escalier gauche, x' = -2047 - x) : contremarche 1 = x - z = -97 ----
-function PerpDR($st) { (-97 - ($st.pos_x - $st.pos_z)) / 1.41421356 }   # >0 = cote marche basse
+# ---- RIGHT staircase (mirror of the left staircase, x' = -2047 - x): riser 1 = x - z = -97 ----
+function PerpDR($st) { (-97 - ($st.pos_x - $st.pos_z)) / 1.41421356 }   # >0 = low-step side
 function AlongR($st) { ($st.pos_x + $st.pos_z) / 1.41421356 }
 function ChainSBLJR([int]$Slot, $prefix, [int]$maxCycles = 10, [double]$DC = 1.5, $dirs = @(26000..40000 | ? { $_ % 1000 -eq 0 }), [double]$target = 0) {
     $cur = @($prefix); $vs = @()
@@ -154,27 +154,27 @@ function ChainSBLJR([int]$Slot, $prefix, [int]$maxCycles = 10, [double]$DC = 1.5
         }
         if ($ok.Count -eq 0) { break }
         $best = $ok | Sort-Object @{e = { [math]::Abs((PerpDR $_.st) - $DC) } } | Select -First 1
-        # garde-fou : pas de gain -> arret (on garde le prefixe precedent)
-        if ($vs.Count -gt 0 -and $best.v -ge $vs[-1]) { Write-Host "arret : pas de gain"; break }
+        # guard: no gain -> stop (keep the previous prefix)
+        if ($vs.Count -gt 0 -and $best.v -ge $vs[-1]) { Write-Host "stop: no gain"; break }
         $cur = $best.tr; $vs += [math]::Round($best.v, 1)
         Write-Host ("cycle {0}: dir={1} ok={2} v={3:N1} d={4:N2} al={5:N0} {6}" -f $c, $best.dd, $ok.Count, $best.v, (PerpDR $best.st), (AlongR $best.st), (Fmt $best.st))
-        if ($target -gt 0 -and [math]::Abs($best.v) -ge $target) { Write-Host "arret : cible atteinte"; break }
+        if ($target -gt 0 -and [math]::Abs($best.v) -ge $target) { Write-Host "stop: target reached"; break }
     }
     [pscustomobject]@{ frames = $cur; vs = $vs }
 }
-# ---- parallele : N workers persistants (worker_srv.ps1), chacun son mupen sur le meme jalon ----
+# ---- parallel: N persistent workers (worker_srv.ps1), each with its own mupen on the same milestone ----
 function Start-Pool([string]$Milestone, [int]$N = 3, [string]$Tag = 'pool', [int]$Speed = 0) {
     $dir = Join-Path $env:TEMP "sm64pool_$Tag"; Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory $dir | Out-Null
     for ($k = 0; $k -lt $N; $k++) {
         Start-Process powershell -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSScriptRoot\worker_srv.ps1`"", '-Id', $k, '-Milestone', "`"$Milestone`"", '-JobDir', "`"$dir`"", '-Speed', $Speed) -WindowStyle Hidden -RedirectStandardOutput (Join-Path $dir "w${k}_out.txt") -RedirectStandardError (Join-Path $dir "w${k}_err.txt") | Out-Null
         Start-Sleep 2
     }
-    $t0 = Get-Date; while (@(Get-ChildItem $dir -Filter 'ready_*').Count -lt $N) { if (((Get-Date) - $t0).TotalSeconds -gt 120) { throw "pool pas pret" }; Start-Sleep 1 }
+    $t0 = Get-Date; while (@(Get-ChildItem $dir -Filter 'ready_*').Count -lt $N) { if (((Get-Date) - $t0).TotalSeconds -gt 120) { throw "pool not ready" }; Start-Sleep 1 }
     [pscustomobject]@{ Dir = $dir; N = $N; Next = 0 }
 }
 function Stop-Pool($pool) { Set-Content (Join-Path $pool.Dir 'stop') '1' }
-# essais en commandes monde : chaque essai = liste de [yaw|$null, boutons, tx|$null, tz|$null] ; le worker corrige la camera chaque frame
-# et renvoie traj (x,y,z,action,etoiles,vitesse,yaw) + inputs reellement appliques.
+# trials as world commands: each trial = list of [yaw|$null, buttons, tx|$null, tz|$null]; the worker corrects the camera each frame
+# and returns traj (x,y,z,action,stars,speed,yaw) + the inputs actually applied.
 function Invoke-PoolCmds($pool, $trials) {
     $ids = @(); $k = 0
     foreach ($t in $trials) {
@@ -191,13 +191,13 @@ function Invoke-PoolCmds($pool, $trials) {
     }
     $ids | % { $out[$_] }
 }
-# lance une liste d'essais (listes d'inputs) en parallele ; renvoie les resultats dans l'ordre
+# runs a list of trials (input lists) in parallel; returns the results in order
 function Invoke-PoolBatch($pool, $trials, [switch]$All) {
     $ids = @(); $k = 0
     foreach ($t in $trials) {
         $id = $pool.Next; $pool.Next++; $ids += $id
         $tmp = Join-Path $pool.Dir ("j{0}.tmp" -f $id)
-        $clean = @($t | % { , @([int]$_[0], [int]$_[1], [int]$_[2]) })   # entiers purs (sinon ConvertTo-Json ecrit {})
+        $clean = @($t | % { , @([int]$_[0], [int]$_[1], [int]$_[2]) })   # pure integers (otherwise ConvertTo-Json writes {})
         (@{ id = $id; frames = $clean; all = [bool]$All } | ConvertTo-Json -Compress -Depth 4) | Set-Content $tmp
         Move-Item $tmp (Join-Path $pool.Dir ("job_{0}_{1}.json" -f ($k % $pool.N), $id)); $k++
     }
@@ -208,7 +208,7 @@ function Invoke-PoolBatch($pool, $trials, [switch]$All) {
     }
     $ids | % { $out[$_] }
 }
-# chaine SBLJ escalier droit, directions testees en parallele ; garde-fou : cible / maxCycles / pas de gain / plus de direction valide
+# right-staircase SBLJ chain, directions tested in parallel; guards: target / maxCycles / no gain / no valid direction left
 function ChainSBLJRPar($pool, [int]$Slot, $prefix, $dirs, [int]$maxCycles = 12, [double]$DC = 1.5, [double]$target = 500) {
     $cur = @($prefix); $vs = @()
     for ($c = 0; $c -lt $maxCycles; $c++) {
@@ -217,17 +217,17 @@ function ChainSBLJRPar($pool, [int]$Slot, $prefix, $dirs, [int]$maxCycles = 12, 
         $res = Invoke-PoolBatch $pool $trials
         $ok = @(); for ($i = 0; $i -lt $dirs.Count; $i++) { $s1 = $res[$i].states[0]; $s2 = $res[$i].states[1]
             if ([long]$s1.action -eq 0x479 -and [long]$s2.action -eq 0x479 -and $s2.pos_y -lt 1) { $ok += [pscustomobject]@{ dd = $dirs[$i]; tr = $trials[$i]; v = $s2.forward_vel; st = $s2 } } }
-        if ($ok.Count -eq 0) { Write-Host "arret : plus de direction valide"; break }
+        if ($ok.Count -eq 0) { Write-Host "stop: no valid direction left"; break }
         $best = $ok | Sort-Object @{e = { [math]::Abs((PerpDR $_.st) - $DC) } } | Select -First 1
-        if ($vs.Count -gt 0 -and $best.v -ge $vs[-1]) { Write-Host "arret : pas de gain"; break }
+        if ($vs.Count -gt 0 -and $best.v -ge $vs[-1]) { Write-Host "stop: no gain"; break }
         $cur = $best.tr; $vs += [math]::Round($best.v, 1)
         Write-Host ("cycle {0}: dir={1} ok={2} v={3:N1} d={4:N2} x+z={5:N0} {6}" -f $c, $best.dd, $ok.Count, $best.v, (PerpDR $best.st), ($best.st.pos_x + $best.st.pos_z), (Fmt $best.st))
-        if ([math]::Abs($best.v) -ge $target) { Write-Host "arret : cible atteinte"; break }
+        if ([math]::Abs($best.v) -ge $target) { Write-Host "stop: target reached"; break }
     }
     [pscustomobject]@{ frames = $cur; vs = $vs }
 }
-# chaine de long jumps en ligne droite vers (tx,tz) : depart (idle ou marche), Z tenu, A a chaque atterrissage LJ (0x479).
-# arret quand la distance horizontale a la cible < $stop, ou apres $maxFrames. Renvoie frames + journal.
+# straight-line long-jump chain toward (tx,tz): start (idle or walking), Z held, A on each LJ landing (0x479).
+# stops when the horizontal distance to the target < $stop, or after $maxFrames. Returns frames + log.
 function LJChain([int]$Slot, $prefix, [double]$tx, [double]$tz, [int]$maxFrames = 300, [double]$stop = 100, [int]$runFrames = 3) {
     $cur = @($prefix); $log = @(); $started = $false; $n = 0
     while ($n -lt $maxFrames) {
@@ -245,7 +245,7 @@ function LJChain([int]$Slot, $prefix, [double]$tx, [double]$tz, [int]$maxFrames 
     [pscustomobject]@{ frames = $cur; log = $log }
 }
 function AngDiff([double]$a, [double]$b) { [math]::Abs((Wrap ($a - $b))) }
-# route en chaines de LJ par waypoints [x,z,rayon] : A a l'atterrissage LJ si aligne (< $tol), sinon on marche pour tourner puis Z, Z+A.
+# route made of LJ chains through waypoints [x,z,radius]: A on the LJ landing if aligned (< $tol), otherwise walk to turn then Z, Z+A.
 function LJRoute([int]$Slot, $prefix, $wps, [int]$maxFrames = 400, [double]$tol = 1200) {
     $cur = @($prefix); $log = @(); $w = 0; $state = 'run'; $n = 0; $runN = 0
     while ($n -lt $maxFrames) {
@@ -259,7 +259,7 @@ function LJRoute([int]$Slot, $prefix, $wps, [int]$maxFrames = 400, [double]$tol 
         elseif ($air) { $b = $(if ($prev -band 0x20) { 0x20 } else { 0 }) }
         elseif ($act -eq 0x4808459) { $b = $(if ($prev -band 0x80) { 0x20 } else { 0xA0 }) }   # crouch slide -> A (LJ)
         else {
-            # au sol (marche, atterrissage...) : si aligne et vitesse > 10 -> Z (crouch slide), sinon marcher
+            # on the ground (walking, landing...): if aligned and speed > 10 -> Z (crouch slide), otherwise walk
             $b = $(if ($aligned -and $m.forward_vel -gt 10.5 -and -not ($prev -band 0x20)) { 0x20 } else { 0 })
         }
         $cur += , @($a[0], $a[1], $b); $n++
@@ -267,8 +267,8 @@ function LJRoute([int]$Slot, $prefix, $wps, [int]$maxFrames = 400, [double]$tol 
     }
     [pscustomobject]@{ frames = $cur; log = $log; w = $w }
 }
-# Execute des commandes monde sur la Mupen principale (meme logique que worker_srv) : [yaw|$null, btn, tx|$null, tz|$null, rev]
-# Stick recalcule a chaque frame avec la camera reelle ; renvoie les inputs bruts appliques + les etats.
+# Runs world commands on the main Mupen (same logic as worker_srv): [yaw|$null, btn, tx|$null, tz|$null, rev]
+# Stick recomputed each frame with the real camera; returns the raw inputs applied + the states.
 function RunCmds([int]$Slot, $prefix, $cmds) {
     if (@($prefix).Count) { RunFrom $Slot $prefix | Out-Null } else { Load-MemState $s -Slot $Slot | Out-Null }
     Set-Pause $s -Value $true

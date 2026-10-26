@@ -13,7 +13,7 @@ for line in src.splitlines():
     a,b,c=[V[int(i)] for i in m.groups()]
     ux,uy,uz=[b[i]-a[i] for i in range(3)];vx,vy,vz=[c[i]-a[i] for i in range(3)]
     nx,ny,nz=uy*vz-uz*vy,uz*vx-ux*vz,ux*vy-uy*vx;L=math.sqrt(nx*nx+ny*ny+nz*nz) or 1
-    # distance du coin aux aretes
+    # distance from the corner to the edges
     def dseg(p,q,x=1200,z=-136):
         px,pz,qx,qz=p[0],p[2],q[0],q[2]; dx,dz=qx-px,qz-pz; t=max(0,min(1,((x-px)*dx+(z-pz)*dz)/((dx*dx+dz*dz) or 1)))
         return math.hypot(x-(px+t*dx),z-(pz+t*dz))

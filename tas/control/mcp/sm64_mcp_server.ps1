@@ -18,6 +18,7 @@ Import-Module (Join-Path (Split-Path -Parent $here) 'SM64Ctl.psm1') -Force -Warn
 $script:SESS = $null
 $script:RUN_INPUTS = New-Object System.Collections.ArrayList   # every frame's input since start_mupen -> one full-run movie
 $script:MOVIE_SEQ = 0                                           # per-run counter so auto-named movies never collide/overwrite
+$script:MEM_RUN = @{}                                           # memstate slot -> RUN_INPUTS count when it was saved
 function Add-RunInputs($inputs) { foreach ($f in @($inputs)) { [void]$script:RUN_INPUTS.Add($f) } }
 function Log($m) { [Console]::Error.WriteLine("[sm64-mcp] $m") }
 # PS 5.1 has no ?? operator — use this instead of value-coalescing.
@@ -72,12 +73,13 @@ $TOOLS = [ordered]@{
         $alive = ($script:SESS -and $script:SESS.Proc -and -not $script:SESS.Proc.HasExited)
         if ($alive -and -not $a.restart) {
             TextResult @{ ok=$true; already_running=$true; pid=$script:SESS.Pid;
-                message="mupen est DEJA demarre (pid $($script:SESS.Pid)). NE rappelle PAS start_mupen. Passe directement a l'etape suivante: scan, goto ou open_chest." }
+                message="mupen is ALREADY running (pid $($script:SESS.Pid)). Do NOT call start_mupen again. Go directly to the next step: scan, goto or open_chest." }
         } else {
             if ($alive) { try { Stop-Mupen $script:SESS } catch {} ; $script:SESS = $null }
             $p=@{}; if($a.rom){$p.Rom=$a.rom}; if($a.savestate){$p.Savestate=$a.savestate}; if($a.no_savestate){$p.NoSavestate=$true}
             $script:SESS = Start-Mupen @p -ReadyTimeoutSec 60
             $script:RUN_INPUTS = New-Object System.Collections.ArrayList   # fresh run recording
+            $script:MEM_RUN = @{}
             $script:MOVIE_SEQ = 0
             TextResult @{ ok=$true; pid=$script:SESS.Pid; session=$script:SESS.SessionDir }
         }
@@ -94,7 +96,10 @@ $TOOLS = [ordered]@{
     desc='Advance N frames applying a controller input, then return the state reached. Deterministic; core is paused between calls. buttons: {A,B,Z,R,L,start,Cup,Cdown,Cleft,Cright,up,down,left,right (bool), X,Y (int8 stick)}.'
     schema=@{type='object';properties=@{ frames=@{type='integer'}; buttons=@{type='object'} }; required=@('frames') }
     handler={ param($a) $b=@{}; if($a.buttons){ $a.buttons.PSObject.Properties|ForEach-Object{ $b[$_.Name]=$_.Value } }
-              TextResult (Step-Frames $script:SESS -Frames ([int]$a.frames) -Buttons $b) } }
+              $r = Step-Frames $script:SESS -Frames ([int]$a.frames) -Buttons $b
+              $f = @([int](Def $b.X 0), [int](Def $b.Y 0), (ConvertTo-BtnMask $b))
+              for ($i = 0; $i -lt [int]$a.frames; $i++) { [void]$script:RUN_INPUTS.Add($f) }
+              TextResult $r } }
   'read_mem' = @{
     desc='Read a value from N64 RAM at a KSEG0 address (0x80xxxxxx). type in u8,s8,u16,s16,u32,s32,f32,f64.'
     schema=@{type='object';properties=@{ addr=@{type='integer'}; type=@{type='string'} }; required=@('addr') }
@@ -106,11 +111,17 @@ $TOOLS = [ordered]@{
   'save_memstate' = @{
     desc='Save an in-memory savestate checkpoint into a slot (fast, disk-free) for branching/search.'
     schema=@{type='object';properties=@{ slot=@{type='integer'} }}
-    handler={ param($a) TextResult (Save-MemState $script:SESS -Slot ([int](Def $a.slot 1))) } }
+    handler={ param($a) $slot = [int](Def $a.slot 1); $script:MEM_RUN[$slot] = $script:RUN_INPUTS.Count
+              TextResult (Save-MemState $script:SESS -Slot $slot) } }
   'load_memstate' = @{
     desc='Restore an in-memory savestate checkpoint from a slot.'
     schema=@{type='object';properties=@{ slot=@{type='integer'} }}
-    handler={ param($a) TextResult (Load-MemState $script:SESS -Slot ([int](Def $a.slot 1))) } }
+    handler={ param($a) $slot = [int](Def $a.slot 1); $r = Load-MemState $script:SESS -Slot $slot
+              if ($script:MEM_RUN.ContainsKey($slot)) {                # (the run recording follows the game back)
+                  $n = $script:MEM_RUN[$slot]
+                  if ($script:RUN_INPUTS.Count -gt $n) { $script:RUN_INPUTS.RemoveRange($n, $script:RUN_INPUTS.Count - $n) }
+              }
+              TextResult $r } }
   'stroop_vars' = @{
     desc='Compute STROOP variables live from RAM (declarative + common computed). files defaults to MarioData+CameraData.'
     schema=@{type='object';properties=@{ files=@{type='array';items=@{type='string'}}; computed=@{type='boolean'} }}
@@ -188,8 +199,8 @@ $TOOLS = [ordered]@{
               $out=[ordered]@{ ok=$r.Ok; reached=$r.Reached; steps=$r.Steps; dist=$r.Dist; x=$r.X; z=$r.Z; frames=$r.Frames }
               $mv=Export-RunSoFar ("goto_{0}_{1}" -f [int]$a.x,[int]$a.z) $a.save_m64
               if($mv){ $out.movie=$mv.movie; $out.movie_frames=$mv.movie_frames; $out.movie_st=$mv.movie_st
-                       $out.summary=("Run vers ({0},{1}): reached={2}, dist={3}. Movie de la run complete: {4}." -f [int]$a.x,[int]$a.z,$r.Reached,$r.Dist,$mv.movie) }
-              else { $out.summary=("Run vers ({0},{1}): reached={2}, dist={3}." -f [int]$a.x,[int]$a.z,$r.Reached,$r.Dist) }
+                       $out.summary=("Run to ({0},{1}): reached={2}, dist={3}. Movie of the complete run: {4}." -f [int]$a.x,[int]$a.z,$r.Reached,$r.Dist,$mv.movie) }
+              else { $out.summary=("Run to ({0},{1}): reached={2}, dist={3}." -f [int]$a.x,[int]$a.z,$r.Reached,$r.Dist) }
               TextResult $out } }
   'open_chest' = @{
     desc='Open task-4 chest N (1-4). A chest opens ONLY when Mario contacts it FROM ITS FRONT FACE and chests must be opened IN ORDER 1->2->3->4 (this tool handles the front approach automatically; you must still call them in order). Verifies the open for REAL via the chest-progress counter: opened=true ONLY if it actually incremented (opened=false if wrong order or bad contact). ALWAYS writes a replayable .m64 movie (auto-named in tas\movies\ unless save_m64) plus a ready-to-report `summary`. For all 4 chests: open_chest 1,2,3,4 in order, then export_run for one combined movie. Returns {opened, chest_progress_before, chest_progress_after, reached, x, z, movie, summary}.'
@@ -205,7 +216,7 @@ $TOOLS = [ordered]@{
               $out=[ordered]@{ ok=$true; chest=$r.Chest; opened=$r.Opened; reason=$r.Reason; chest_progress_before=$r.ProgressBefore; chest_progress_after=$r.ProgressAfter; dist=$r.Dist; reached=$r.Reached; x=$r.X; z=$r.Z; frames=$r.Frames }
               $mv=Export-RunSoFar ("chest{0}" -f [int]$a.chest) $a.save_m64
               if($mv){ $out.movie=$mv.movie; $out.movie_frames=$mv.movie_frames; $out.movie_st=$mv.movie_st }
-              $out.summary=("Coffre {0}: opened={1} [{2}] (chest_progress {3}->{4}). Movie: {5}." -f $r.Chest,$r.Opened,$r.Reason,$r.ProgressBefore,$r.ProgressAfter,(Def $mv.movie '(rien enregistre)'))
+              $out.summary=("Chest {0}: opened={1} [{2}] (chest_progress {3}->{4}). Movie: {5}." -f $r.Chest,$r.Opened,$r.Reason,$r.ProgressBefore,$r.ProgressAfter,(Def $mv.movie '(nothing recorded)'))
               TextResult $out } }
   'scan' = @{
     desc='PERCEPTION: see what is AROUND Mario instead of navigating blind. Returns Mario context (pos x/y/z, floor/ceil height, facing, num_stars), named OBJECTS (name, x, z, dist, dx, dz, dy=height above Mario) AND collision WALLS (x, z, dist, dx, dz, normal nx/nz, y_lo/y_hi). To FIND a specific target ANYWHERE (not just nearby), pass filter (substring/regex on the name, e.g. "red coin", "coin", "star", "switch") -> returns every match sorted by distance across a large radius. Objects give x,z and dy; for a 3D goto you need the target Y = mario.y + dy. Set walls:false to skip walls (faster).'
@@ -229,7 +240,7 @@ $TOOLS = [ordered]@{
                   mario=[ordered]@{ x=[int][math]::Round($m.pos_x); y=[int][math]::Round($m.pos_y); z=[int][math]::Round($m.pos_z); floor=[int]$m.floor_height; ceil=[int]$m.ceil_height; face_yaw=$m.face_yaw; num_stars=$m.num_stars; num_coins=$m.num_coins; red_coins=$m.red_coins }
                   objects=@($objs); walls=@($walls); floors=@($floors) }) } }
   'move' = @{
-    desc='Perform a named SM64 MOVE in a world direction (dir_x,dir_z; default toward -Z). Repertoire: jump, long_jump, double_jump, triple_jump, backflip, ground_pound, dive, punch. Returns {ok,move,action,x,y,z,frames}; ok=true means the move actually came out (verified by action id). long_jump/dive cover ground fast; backflip/ground_pound gain height. Use between goto legs to clear ledges, gaps or gain reach.'
+    desc='Perform a named SM64 MOVE in a world direction (dir_x,dir_z; default toward -Z). Moves: jump, long_jump, double_jump, triple_jump, backflip, ground_pound, dive, punch. Returns {ok,move,action,x,y,z,frames}; ok=true means the move actually came out (verified by action id). long_jump/dive cover ground fast; backflip/ground_pound gain height. Use between goto legs to clear ledges, gaps or gain reach.'
     schema=@{type='object';properties=@{
         move=@{type='string';enum=@('jump','long_jump','double_jump','triple_jump','backflip','ground_pound','dive','punch');description='which move'}
         dir_x=@{type='number';description='world X direction (default 0)'}
@@ -256,7 +267,7 @@ $TOOLS = [ordered]@{
               $mv = if($r.Collected){ Export-RunSoFar ("collect_{0}" -f ([string]$r.Name -replace '[^A-Za-z0-9]','_')) $a.save_m64 } else { $null }
               if($mv){
                   $out.movie=$mv.movie; $out.movie_frames=$mv.movie_frames; $out.movie_st=$mv.movie_st
-                  $out.summary=("Collect '{0}': collected={1} [{2}] (red_coins {3}->{4}). Movie de la run complete: {5}." -f $r.Name,$r.Collected,$r.Reason,$r.RedCoinsBefore,$r.RedCoinsAfter,$mv.movie)
+                  $out.summary=("Collect '{0}': collected={1} [{2}] (red_coins {3}->{4}). Movie of the complete run: {5}." -f $r.Name,$r.Collected,$r.Reason,$r.RedCoinsBefore,$r.RedCoinsAfter,$mv.movie)
               } else { $out.summary=$r.Reason }
               TextResult $out } }
   'grab_star' = @{
@@ -271,22 +282,22 @@ $TOOLS = [ordered]@{
               $mv = if($r.Grabbed){ Export-RunSoFar 'grab_star' $a.save_m64 } else { $null }
               if($mv){
                   $out.movie=$mv.movie; $out.movie_frames=$mv.movie_frames; $out.movie_st=$mv.movie_st
-                  $out.summary=("grab_star: grabbed={0} (num_stars {1}->{2}, backflip depuis plateforme y={3}). Movie de la run complete: {4}." -f $r.Grabbed,$r.StarsBefore,$r.StarsAfter,$r.PlatformY,$mv.movie)
+                  $out.summary=("grab_star: grabbed={0} (num_stars {1}->{2}, backflip from platform y={3}). Movie of the complete run: {4}." -f $r.Grabbed,$r.StarsBefore,$r.StarsAfter,$r.PlatformY,$mv.movie)
               } else { $out.summary=$r.Reason }
               TextResult $out } }
   'export_run' = @{
     desc='Export ONE replayable .m64 movie of EVERYTHING done since start_mupen (all goto/move/open_chest legs combined, in order), from the loaded savestate. Use this AFTER a multi-step run (e.g. chest 1 then chest 2) to get a single continuous movie instead of one file per leg. Auto-named in tas\movies\ unless out is given.'
     schema=@{type='object';properties=@{ out=@{type='string';description='output .m64 path (optional)'} }}
     handler={ param($a)
-              if(@($script:RUN_INPUTS).Count -eq 0){ TextResult @{ ok=$false; message="Rien a exporter: aucun deplacement enregistre depuis start_mupen. Fais d'abord des goto/move/open_chest." } }
+              if(@($script:RUN_INPUTS).Count -eq 0){ TextResult @{ ok=$false; message="Nothing to export: no movement recorded since start_mupen. Play frames first (step_frames, goto, move...)." } }
               else {
                   $mv=Export-GotoMovie $script:RUN_INPUTS.ToArray() (Resolve-MoviePath $a.out 'run_full.m64')
                   TextResult ([ordered]@{ ok=$true; movie=$mv.movie; movie_frames=$mv.movie_frames; movie_st=$mv.movie_st
-                      summary=("Movie COMPLET de la run ({0} frames) pret a verifier: {1}. Tache terminee." -f $mv.movie_frames,$mv.movie) }) } } }
+                      summary=("COMPLETE movie of the run ({0} frames) ready to verify: {1}. Task finished." -f $mv.movie_frames,$mv.movie) }) } } }
   'reset_run' = @{
     desc='Clear the full-run recording (start a fresh combined movie from the current point). The per-leg goto/open_chest movies are unaffected.'
     schema=@{type='object';properties=@{}}
-    handler={ param($a) $script:RUN_INPUTS = New-Object System.Collections.ArrayList; $script:MOVIE_SEQ = 0; TextResult @{ ok=$true; message="Enregistrement de run remis a zero." } } }
+    handler={ param($a) $script:RUN_INPUTS = New-Object System.Collections.ArrayList; $script:MOVIE_SEQ = 0; TextResult @{ ok=$true; message="Run recording reset to zero." } } }
 }
 
 # ---- JSON-RPC plumbing -------------------------------------------------------------------------
@@ -325,7 +336,7 @@ while ($true) {
                 # (otherwise it fails deep in PowerShell with a cryptic "Session is null" bind error).
                 $script:NoSessionTools = @('start_mupen','list_chests','sim_example','sim_examples','sim_bruteforce','paths','export_m64','octagon_clamp','confirm_movie')
                 if ($null -eq $script:SESS -and -not ($script:NoSessionTools -contains $name)) {
-                    Reply $id @{ content=@(@{ type='text'; text="ERREUR: mupen n'est pas demarre. Appelle D'ABORD l'outil 'start_mupen' (et NON 'invoke_action') avec le savestate absolu de la task, puis reessaie '$name'." }); isError=$true }
+                    Reply $id @{ content=@(@{ type='text'; text="ERROR: mupen is not running. Call the 'start_mupen' tool FIRST (NOT 'invoke_action') with the task's absolute savestate, then retry '$name'." }); isError=$true }
                     break
                 }
                 try {

@@ -1,13 +1,13 @@
 . "$PSScriptRoot\checker.ps1"
 $MS = 0x8033B170
 function CamYaw { $ar = U32 (Read-Mem -Session $s -Addr ($MS + 0x90) -Type u32); $cm = U32 (Read-Mem -Session $s -Addr ($ar + 0x24) -Type u32); [double](Read-Mem -Session $s -Addr ($cm + 0x2) -Type s16) }
-# stick (x,y) pour aller dans la direction monde $Dir (yaw SM64) avec la camera $cy
+# stick (x,y) to go in world direction $Dir (SM64 yaw) with camera $cy
 function St([double]$Dir, [double]$cy, [double]$mag = 127) { $t = ($Dir - $cy) / 65536 * 2 * [math]::PI; @([int][math]::Round($mag * [math]::Sin($t)), [int][math]::Round(-$mag * [math]::Cos($t))) }
-# distance perpendiculaire a la contremarche n1 (x+z=-1950), >0 = cote marche basse ; abscisse le long de la marche
+# perpendicular distance to riser n1 (x+z=-1950), >0 = low-step side; coordinate along the step
 function PerpD($st) { ($st.pos_x + $st.pos_z + 1950) / 1.41421356 }
 function AlongS($st) { ($st.pos_x - $st.pos_z) / 1.41421356 }
 function Fmt($st) { '({0:N1},{1:N1},{2:N1}) v={3:N1} yaw={4} act={5:X}' -f $st.pos_x, $st.pos_y, $st.pos_z, $st.forward_vel, $st.face_yaw, ([long]$st.action) }
-# chaine SBLJ depuis l'etat courant : cycles (Z+A+cote, Z+cote). Renvoie liste des vitesses et etat final
+# SBLJ chain from the current state: cycles (Z+A+side, Z+side). Returns the list of speeds and the final state
 function Chain([int]$maxCycles = 12, [double]$side = -24576) {
     $cy = CamYaw; $a = St $side $cy; $fr = @()
     for ($c = 0; $c -lt $maxCycles; $c++) { $fr += , @($a[0], $a[1], 0xA0); $fr += , @($a[0], $a[1], 0x20) }
@@ -16,10 +16,10 @@ function Chain([int]$maxCycles = 12, [double]$side = -24576) {
     foreach ($f in $r.frames) { if ($f.f % 2 -eq 0) { if ([long]$f.s.action -ne 0x479) { break }; $vs += [math]::Round($f.s.forward_vel, 1); $last = $f } }
     [pscustomobject]@{ vs = $vs; n = $vs.Count; last = $last; frames = $fr }
 }
-# essaie un cycle (2 frames) avec la direction $d ; renvoie l'etat apres le cycle
+# tries one cycle (2 frames) with direction $d; returns the state after the cycle
 function TryCycle([double]$d, [double]$cy) { $a = St $d $cy; $fr = @(, @($a[0], $a[1], 0xA0)) + @(, @($a[0], $a[1], 0x20)); $r = Invoke-Replay -Session $s -Frames $fr -SampleAll; [pscustomobject]@{ d = $d; fr = $fr; s1 = $r.frames[0].s; s2 = $r.frames[1].s } }
 function OkCycle($t) { ([long]$t.s2.action -eq 0x479) -and ($t.s2.pos_y -lt 1) -and ([long]$t.s1.action -eq 0x479) }
-# chaine gloutonne avec anticipation d'un cycle. Slots memoire 20.. utilises. Renvoie inputs + vitesses
+# greedy chain with one-cycle lookahead. Memory slots 20.. used. Returns inputs + speeds
 function ChainGreedy([int]$maxCycles = 12, [double[]]$dirs = @(26000..34000 | ? { $_ % 500 -eq 0 })) {
     $all = @(); $vs = @(); $cur = $null
     Save-MemState $s -Slot 20 | Out-Null
@@ -29,7 +29,7 @@ function ChainGreedy([int]$maxCycles = 12, [double[]]$dirs = @(26000..34000 | ? 
         foreach ($d in $dirs) {
             Load-MemState $s -Slot 20 | Out-Null; $t = TryCycle $d $cy
             if (OkCycle $t) {
-                # anticipation : existe-t-il un cycle suivant valide ?
+                # lookahead: is there a valid next cycle?
                 Save-MemState $s -Slot 21 | Out-Null; $cy2 = CamYaw; $nxt = 0
                 foreach ($d2 in $dirs) { Load-MemState $s -Slot 21 | Out-Null; if (OkCycle (TryCycle $d2 $cy2)) { $nxt++ } }
                 $cands += [pscustomobject]@{ t = $t; nxt = $nxt; v = $t.s2.forward_vel }
@@ -44,7 +44,7 @@ function ChainGreedy([int]$maxCycles = 12, [double[]]$dirs = @(26000..34000 | ? 
     }
     [pscustomobject]@{ frames = $all; vs = $vs; last = $cur }
 }
-# approche depuis le slot 10 : n frames de course vers F, Z, Z+A, puis stick arriere (F+32768+th) + Z jusqu'a l'atterrissage LJ
+# approach from slot 10: n running frames toward F, Z, Z+A, then back stick (F+32768+th) + Z until the LJ landing
 function Approach([double]$F, [int]$n, [double]$th, [int]$j = 0, [double]$cy = 10863) {
     $fr = @(); $a = St $F $cy
     for ($i = 0; $i -lt $n; $i++) { $fr += , @($a[0], $a[1], 0) }
@@ -59,7 +59,7 @@ function Approach([double]$F, [int]$n, [double]$th, [int]$j = 0, [double]$cy = 1
     if (-not $land) { return $null }
     [pscustomobject]@{ F = $F; n = $n; th = $th; j = $j; fl = $land.f; v = [math]::Round($land.s.forward_vel, 1); yaw = $land.s.face_yaw; d = [math]::Round((PerpD $land.s), 1); sAl = [math]::Round((AlongS $land.s)); y = $land.s.pos_y; ljv = $(if ($lj) { [math]::Round($lj.s.forward_vel, 1) } else { $null }); frames = $fr[0..($land.f - 1)] }
 }
-# version deterministe : chaque essai rejoue tout le prefixe depuis le slot 10
+# deterministic version: each trial replays the whole prefix from slot 10
 function RunFrom10($frames) { Load-MemState $s -Slot 10 | Out-Null; (Invoke-Replay -Session $s -Frames $frames -SampleAll).frames }
 function ChainGreedyPrefix($prefix, [int]$maxCycles = 10, [double[]]$dirs = @(26000..34000 | ? { $_ % 500 -eq 0 })) {
     $cur = @($prefix); $vs = @()
@@ -72,7 +72,7 @@ function ChainGreedyPrefix($prefix, [int]$maxCycles = 10, [double[]]$dirs = @(26
             if ([long]$s1.action -eq 0x479 -and [long]$s2.action -eq 0x479 -and $s2.pos_y -lt 1) { $ok += [pscustomobject]@{ d = $d; tr = $tr; v = $s2.forward_vel; st = $s2 } }
         }
         if ($ok.Count -eq 0) { break }
-        # anticipation sur les 4 plus rapides
+        # lookahead on the 4 fastest
         $best = $null; $bestN = -1
         $cand = $(if ($script:DCenter) { $ok | Sort-Object @{e = { [math]::Abs((PerpD $_.st) - $script:DCenter) } } | Select -First 3 } else { $ok | Sort-Object v | Select -First 4 })
         foreach ($o in $cand) {
@@ -85,7 +85,7 @@ function ChainGreedyPrefix($prefix, [int]$maxCycles = 10, [double[]]$dirs = @(26
     [pscustomobject]@{ frames = $cur; vs = $vs }
 }
 function Base84 { $fr = @((Get-Content "$PSScriptRoot\chain2.json" -Raw | ConvertFrom-Json).frames | % { , @([int]$_[0], [int]$_[1], [int]$_[2]) }); $fr + @(1..36 | % { , @(0, 0, 0) }) }
-# BLJ d'escalier start-bufferise : a chaque frame de jeu, si Mario est en atterrissage LJ -> A+Z+Start puis 3 frames figees
+# start-buffered staircase BLJ: each game frame, if Mario is landing a LJ -> A+Z+Start then 3 frozen frames
 function BufferedStairs($fr, [int]$maxGame = 40, [int]$stopZ = -1160) {
     $log = @()
     for ($g = 0; $g -lt $maxGame; $g++) {
@@ -99,16 +99,16 @@ function BufferedStairs($fr, [int]$maxGame = 40, [int]$stopZ = -1160) {
     [pscustomobject]@{ frames = $fr; log = $log; last = $fs[-1].s }
 }
 
-# ---- jalons : savestate FICHIER -> slot memoire, puis rejouer seulement le segment depuis ce jalon ----
-# Utiliser un jalon (.st pris juste avant le passage a travailler) au lieu de tout rejouer depuis le debut.
+# ---- milestones: FILE savestate -> memory slot, then replay only the segment from this milestone ----
+# Use a milestone (a .st taken just before the section to work on) instead of replaying everything from the start.
 function Use-Milestone([string]$Path, [int]$Slot = 11) {
-    if (-not (Test-Path -LiteralPath $Path)) { throw "jalon introuvable: $Path (un chargement de fichier inexistant bloque le bridge)" }
-    # pause AVANT le chargement : sinon, si l'emulateur tourne (juste apres Start-Mupen), des frames sans input
-    # passent pendant l'attente et le slot ne correspond plus au fichier .st
+    if (-not (Test-Path -LiteralPath $Path)) { throw "milestone not found: $Path (loading a missing file blocks the bridge)" }
+    # pause BEFORE loading: otherwise, if the emulator is running (right after Start-Mupen), frames without input
+    # pass during the wait and the slot no longer matches the .st file
     Set-Pause $s -Value $true; Load-State -Session $s -Path $Path | Out-Null; Start-Sleep 2; Set-Pause $s -Value $true
     Save-MemState $s -Slot $Slot | Out-Null; $script:MSlot = $Slot
 }
 function RunFrom([int]$Slot, $frames) { Load-MemState $s -Slot $Slot | Out-Null; (Invoke-Replay -Session $s -Frames $frames -SampleAll).frames }
-# sauver un jalon fichier apres un prefixe d'inputs rejoue depuis un slot
+# save a file milestone after an input prefix replayed from a slot
 function Save-Milestone([int]$FromSlot, $frames, [string]$Path) { RunFrom $FromSlot $frames | Out-Null; Save-State -Session $s -Path $Path }
 function Level { Read-Mem -Session $s -Addr 0x8032DDF8 -Type s16 }

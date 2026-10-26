@@ -1,7 +1,7 @@
-# BLJ espace sur l'elevateur (non bufferise) depuis e1_sur_elevateur.st, puis recul en hypervitesse vers la grille.
-# o frames Z avant le 1er BLJ, n BLJ espaces de s frames (A+Z sur la frame du BLJ, Z sinon, stick arriere 18209),
-# 3 frames d'atterrissage (Z), puis recul vers (1456,446) (stick oppose a la cible) pendant 70 frames.
-# Critere : Mario derriere la grille (> 60) au niveau de l'enclos (y >= 760). Arret au premier succes.
+# Spaced BLJ on the elevator (unbuffered) from e1_sur_elevateur.st, then reverse at hyperspeed toward the grid.
+# o Z frames before the 1st BLJ, n spaced BLJs of s frames (A+Z on the BLJ frame, Z otherwise, back stick 18209),
+# 3 landing frames (Z), then reverse toward (1456,446) (stick opposite the target) for 70 frames.
+# Criterion: Mario behind the grid (> 60) at the pen level (y >= 760). Stop at the first success.
 . "$PSScriptRoot\freerun.ps1"
 $d = if ($env:MOVIE_CHOMP_DIR) { $env:MOVIE_CHOMP_DIR } else { Join-Path $PSScriptRoot '..\MOVIE_CHOMP' }
 $nx = -0.536; $nz = 0.844
@@ -24,14 +24,14 @@ try {
             $best = ($t | % { BehindXZ $_[0] $_[2] } | measure -Maximum).Maximum
             $maxv = ($t | % { [math]::Abs($_[5]) } | measure -Maximum).Maximum
             $fin = $t[-1]
-            Write-Host ("  s={0} n={1} o={2} : |v| max={3:N0} derriere max={4:N0} fin=({5},{6},{7}) act={8:X}" -f $m.s, $m.n, $m.o, $maxv, $best, $fin[0], $fin[1], $fin[2], [long]$fin[3])
+            Write-Host ("  s={0} n={1} o={2} : |v| max={3:N0} behind max={4:N0} fin=({5},{6},{7}) act={8:X}" -f $m.s, $m.n, $m.o, $maxv, $best, $fin[0], $fin[1], $fin[2], [long]$fin[3])
             for ($f = 0; $f -lt $t.Count; $f++) {
                 if ((BehindXZ $t[$f][0] $t[$f][2]) -gt 60 -and $t[$f][1] -ge 760 -and $t[$f][1] -lt 1000 -and [math]::Abs($t[$f][0]) -lt 5000 -and [math]::Abs($t[$f][2]) -lt 5000) {
                     $hit = [pscustomobject]@{ s = $m.s; n = $m.n; o = $m.o; f = $f + 1; pos = $t[$f]; inputs = @($res[$q].inputs); traj = $t }; break }
             }
             if ($hit) { break }
         }
-        Write-Host ("essais {0}..{1} faits ; {2}" -f $i, $j, $(if ($hit) { "TROUVE s=$($hit.s) n=$($hit.n) o=$($hit.o) frame $($hit.f) pos=($($hit.pos[0]),$($hit.pos[1]),$($hit.pos[2]))" } else { 'rien' }))
+        Write-Host ("trials {0}..{1} done ; {2}" -f $i, $j, $(if ($hit) { "FOUND s=$($hit.s) n=$($hit.n) o=$($hit.o) frame $($hit.f) pos=($($hit.pos[0]),$($hit.pos[1]),$($hit.pos[2]))" } else { 'nothing' }))
     }
 } finally { Stop-Pool $pool }
-if ($hit) { $hit | ConvertTo-Json -Depth 6 -Compress | Set-Content "$env:TEMP\ebs_hit.json"; "SUCCES s=$($hit.s) n=$($hit.n) o=$($hit.o)" } else { "aucun passage de grille" }
+if ($hit) { $hit | ConvertTo-Json -Depth 6 -Compress | Set-Content "$env:TEMP\ebs_hit.json"; "SUCCES s=$($hit.s) n=$($hit.n) o=$($hit.o)" } else { "no pass through the grid" }

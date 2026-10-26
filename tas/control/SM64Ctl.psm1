@@ -20,8 +20,19 @@ $ErrorActionPreference = 'Stop'
 $script:ControlDir = Split-Path -Parent $PSCommandPath                       # ...\tas\control
 $script:Root       = Split-Path -Parent (Split-Path -Parent $script:ControlDir) # root of sm64-mupen-bridge
 $script:BridgeLua  = Join-Path $script:ControlDir 'mupen\bridge.lua'
+# config.json at the repo's root: written by INSTALL.bat (mupen, rom_us, stroop); the environment overrides it
+$script:Config = $null
+$cfgPath = Join-Path $script:Root 'config.json'
+if (Test-Path $cfgPath) { try { $script:Config = Get-Content $cfgPath -Raw | ConvertFrom-Json } catch { } }
+function Get-ConfigPath([string]$name) {
+    if ($script:Config -and $script:Config.$name -and (Test-Path $script:Config.$name)) {
+        return (Resolve-Path $script:Config.$name).Path
+    }
+    return $null
+}
 function Resolve-MupenExe {
     if ($env:MUPEN_EXE -and (Test-Path $env:MUPEN_EXE)) { return (Resolve-Path $env:MUPEN_EXE).Path }
+    $c = Get-ConfigPath 'mupen'; if ($c) { return $c }
     $cmd = Get-Command 'mupen64.exe' -ErrorAction SilentlyContinue
     if ($cmd -and $cmd.Source) { return $cmd.Source }
     $candidates = @(
@@ -30,9 +41,7 @@ function Resolve-MupenExe {
         (Join-Path $script:Root '..\mupen64-rr-lua\mupen64.exe'),
         (Join-Path $script:Root '..\mupen64\mupen64.exe'),
         (Join-Path $script:Root 'mupen64.exe'),
-        (Join-Path $script:Root 'bin\mupen64.exe'),
-        'D:\mupen\mupen64-rr-lua\build\out\mupen64.exe',
-        'C:\mupen\mupen64-rr-lua\build\out\mupen64.exe'
+        (Join-Path $script:Root 'bin\mupen64.exe')
     )
     foreach ($c in $candidates) {
         if (Test-Path $c) { return (Resolve-Path $c).Path }
@@ -42,16 +51,14 @@ function Resolve-MupenExe {
 
 function Resolve-DefaultRom {
     if ($env:SM64_ROM -and (Test-Path $env:SM64_ROM)) { return (Resolve-Path $env:SM64_ROM).Path }
+    $c = Get-ConfigPath 'rom_us'; if ($c) { return $c }
     $candidates = @(
         (Join-Path $env:USERPROFILE 'Downloads\Super Mario 64 (USA).z64'),
         (Join-Path $HOME 'Downloads\Super Mario 64 (USA).z64'),
-        'C:\Users\hugo2\Downloads\Super Mario 64 (USA).z64',
         (Join-Path $script:Root '..\mupen64-rr-lua\build\out\roms\Super Mario 64 (USA).z64'),
         (Join-Path $script:Root 'roms\Super Mario 64 (USA).z64'),
         (Join-Path $script:Root 'Super Mario 64 (USA).z64'),
-        (Join-Path $script:Root '..\roms\Super Mario 64 (USA).z64'),
-        'D:\mupen\mupen64-rr-lua\build\out\roms\Super Mario 64 (USA).z64',
-        'C:\mupen\mupen64-rr-lua\build\out\roms\Super Mario 64 (USA).z64'
+        (Join-Path $script:Root '..\roms\Super Mario 64 (USA).z64')
     )
     foreach ($c in $candidates) {
         if (Test-Path $c) { return (Resolve-Path $c).Path }
@@ -63,12 +70,12 @@ function Resolve-DefaultRom {
 
 function Resolve-StroopExe {
     if ($env:STROOP_EXE -and (Test-Path $env:STROOP_EXE)) { return (Resolve-Path $env:STROOP_EXE).Path }
+    $c = Get-ConfigPath 'stroop'; if ($c) { return $c }
     $candidates = @(
         (Join-Path $script:Root '..\STROOP\STROOP.exe'),
         (Join-Path $script:Root '..\STROOP-src\STROOP\bin\Debug\net10.0-windows7.0\STROOP.exe'),
         (Join-Path $script:Root '..\STROOP\STROOP\bin\Debug\net8.0-windows\STROOP.exe'),
-        (Join-Path $script:Root 'STROOP\STROOP.exe'),
-        'D:\mupen\STROOP\STROOP.exe'
+        (Join-Path $script:Root 'STROOP\STROOP.exe')
     )
     foreach ($c in $candidates) {
         if (Test-Path $c) { return (Resolve-Path $c).Path }
@@ -124,10 +131,10 @@ function Set-MupenHeadlessConfig {
     if (-not (Test-Path $cfg)) { Write-Verbose "no config yet at $cfg (mupen will create it)"; return }
     $bak = "$cfg.sm64ctlbak"
     if (-not (Test-Path $bak)) { Copy-Item $cfg $bak -Force }
-    # Les builds recents de mupen64-rr-lua integrent les plugins dans l'exe : NoVideo/NoAudio se
-    # selectionnent par "<builtin>/NoVideo" et "<builtin>/NoAudio", et un chemin vide = plugin TAS integre.
-    # (L'ancien chemin build\out\plugin\*.dll n'existe plus : mupen retombait sur TASVideo OpenGL + audio
-    # reel, ce qui limitait l'emulation a ~60 frames/s.)
+    # Recent mupen64-rr-lua builds embed the plugins in the exe: NoVideo/NoAudio are
+    # selected by "<builtin>/NoVideo" and "<builtin>/NoAudio", and an empty path = the built-in TAS plugin.
+    # (The old build\out\plugin\*.dll path no longer exists: mupen fell back to TASVideo OpenGL + real audio,
+    # which capped emulation at ~60 frames/s.)
     $text = Get-Content -Raw -Path $cfg
     if (-not $KeepAudioVideo) {
         $text = [regex]::Replace($text, '"selected_video_plugin"\s*:\s*"[^"]*"', '"selected_video_plugin": "<builtin>/NoVideo"')
@@ -564,7 +571,7 @@ function Save-Screenshot {
     } else {
         Start-Sleep -Milliseconds 200
     }
-    # Verifier si le fichier genere est absent ou vide / noir, et recuperer le dernier BMP Mupen si besoin
+    # Check whether the generated file is missing, empty or black, and recover the last Mupen BMP if needed
     if (-not (Test-Path $Path) -or (Get-Item $Path).Length -lt 2000) {
         $mupenDir = Split-Path -Parent $script:MupenExe
         $bmpDir = Join-Path $mupenDir 'screenshots'
@@ -797,7 +804,7 @@ function Clear-MupenSessions {
     $all  = @(Get-ChildItem $dir -Directory -Filter 'run_*' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
     $keep = if ($KeepLast -gt 0) { @($all | Select-Object -First $KeepLast) } else { @() }
     $keepPaths = $keep | ForEach-Object { $_.FullName }
-    # ne jamais supprimer une session vivante (heartbeat status.json recent) : plusieurs mupen en parallele
+    # never delete a live session (recent heartbeat in status.json): several mupen instances run in parallel
     $live = { param($d) $st = Join-Path $d.FullName 'status.json'; (Test-Path $st) -and ((Get-Date) - (Get-Item $st).LastWriteTime).TotalSeconds -lt 120 }
     $kill = @($all | Where-Object { $keepPaths -notcontains $_.FullName -and -not (& $live $_) })
     foreach ($d in $kill) { Remove-Item $d.FullName -Recurse -Force -ErrorAction SilentlyContinue }
@@ -1171,7 +1178,7 @@ function Invoke-Chase {
     <#
       .SYNOPSIS  Navigate toward a MOVING object identified by its object-pool BASE ADDRESS, re-reading the
                  target's LIVE position every chunk so a walking target (goomba, bob-omb, a coin that rolls/
-                 falls) is never lost — "scan en continu pour ne pas perdre le fil". Steers with the same
+                 falls) is never lost — "continuous scan so the thread is never lost". Steers with the same
                  camera-robust feedback as Invoke-Goto; climbs toward an elevated target when stalled.
                  Stops when within StopDist (XZ) of the target, or when the target goes INACTIVE
                  (defeated/collected -> .Gone), or at MaxSteps. Records every input for movie export.
@@ -1216,7 +1223,7 @@ function Invoke-Collect {
                  goes inactive OR a counter rises: red_coins/coins/stars) — not just "got close". Tries the
                  nearest matches in turn (reloading a checkpoint between tries so a failed attempt doesn't strand
                  Mario). For an in-air collectible it centers XZ exactly then does a plain vertical jump (grab
-                 radius ~100-130, so no need to climb the full height; a run-up would de-center). Polyvalent.
+                 radius ~100-130, so no need to climb the full height; a run-up would de-center). Versatile.
       .OUTPUTS   { Collected, Found, Name, X, Z, Dist, Reason, RedCoinsBefore/After, ..., Frames, Inputs }
     #>
     param(
@@ -1228,7 +1235,7 @@ function Invoke-Collect {
         $NearX = $null, $NearZ = $null   # target the object nearest THIS point (else nearest to Mario)
     )
     $cands = @(Get-MatchingObjects -Session $Session -Filter $Name -NearX $NearX -NearZ $NearZ)
-    if ($cands.Count -eq 0) { return [pscustomobject]@{ Collected=$false; Found=$false; Reason="aucun objet correspondant a '$Name' n'a ete trouve dans le niveau"; Frames=0; Inputs=@() } }
+    if ($cands.Count -eq 0) { return [pscustomobject]@{ Collected=$false; Found=$false; Reason="no object matching '$Name' was found in the level"; Frames=0; Inputs=@() } }
     # If the caller targets a SPECIFIC object (near_x/near_z), try only that one (fast, matches intent).
     if ($null -ne $NearX -and $null -ne $NearZ) { $MaxCandidates = 1 }
     $m0 = Get-MarioState -Session $Session
@@ -1331,7 +1338,7 @@ function Invoke-Collect {
     $m1 = Get-MarioState -Session $Session
     [pscustomobject]@{
         Collected=$false; Found=$true; Name=$bestName; X=$m1.pos_x; Z=$m1.pos_z; Dist=[math]::Round($bestDist,1)
-        Reason=("PAS ramasse apres {0} candidat(s) - meilleur approche dist3D={1:N0} (plateforme/route requise). Etat restaure, rien perdu." -f $n,$bestDist)
+        Reason=("NOT collected after {0} candidate(s) - best approach dist3D={1:N0} (platform/route required). State restored, nothing lost." -f $n,$bestDist)
         RedCoinsBefore=$rc0; RedCoinsAfter=[int]$m1.red_coins; CoinsBefore=$c0; CoinsAfter=[int]$m1.num_coins; StarsBefore=$s0; StarsAfter=[int]$m1.num_stars
         Frames=0; Inputs=@()   # state was restored on failure -> no net movement recorded
     }
@@ -1353,7 +1360,7 @@ function Invoke-GrabPlatformStar {
         [int[]]$SettleTries = @(26,22,30,18,34)  # backflip works over a window; try a few if the first misses
     )
     $star = Get-MatchingObjects -Session $Session -Filter $Filter | Select-Object -First 1
-    if (-not $star) { return [pscustomobject]@{ Grabbed=$false; Found=$false; Reason="aucune etoile '$Filter' trouvee (scan)"; Inputs=@(); Frames=0 } }
+    if (-not $star) { return [pscustomobject]@{ Grabbed=$false; Found=$false; Reason="no star '$Filter' found (scan)"; Inputs=@(); Frames=0 } }
     $SX=[double]$star.x; $SY=[double]$star.y; $SZ=[double]$star.z; $sbase=[int64]$star.base
     $s0 = [int](Get-MarioState -Session $Session).num_stars
     Save-MemState -Session $Session -Slot 15 | Out-Null   # non-destructive restore point on failure
@@ -1366,7 +1373,7 @@ function Invoke-GrabPlatformStar {
         [math]::Sqrt(($_.x-$SX)*($_.x-$SX)+($_.z-$SZ)*($_.z-$SZ)) -le $PlatformRadius
     } | Sort-Object { -[double]$_.height } | Select-Object -First 1
     if (-not $plat) { Load-MemState -Session $Session -Slot 15 | Out-Null
-        return [pscustomobject]@{ Grabbed=$false; Found=$true; Name=$star.name; Reason='aucune plateforme de lancement trouvee sous l etoile'; Inputs=@(); Frames=0; StarsBefore=$s0; StarsAfter=$s0 } }
+        return [pscustomobject]@{ Grabbed=$false; Found=$true; Name=$star.name; Reason='no launch platform found under the star'; Inputs=@(); Frames=0; StarsBefore=$s0; StarsAfter=$s0 } }
     $PX=[double]$plat.x; $PZ=[double]$plat.z; $PY=[double]$plat.height
 
     $stepFn = { param($inputs,$btn) $mm=Step-Frames -Session $Session -Frames 1 -Buttons $btn; [void]$inputs.Add(@([int]$btn.X,[int]$btn.Y,(ConvertTo-BtnMask $btn))); $mm }
@@ -1381,7 +1388,7 @@ function Invoke-GrabPlatformStar {
     if ([math]::Abs([double]$m.floor_height - $PY) -gt 60) {
         Load-MemState -Session $Session -Slot 15 | Out-Null
         return [pscustomobject]@{ Grabbed=$false; Found=$true; Name=$star.name; StarsBefore=$s0; StarsAfter=$s0; PlatformY=[math]::Round($PY)
-            Reason=("nav n a pas atteint la plateforme (floor={0:N0}, cible={1:N0}). Etat restaure." -f $m.floor_height,$PY); Inputs=@(); Frames=0 }
+            Reason=("nav did not reach the platform (floor={0:N0}, target={1:N0}). State restored." -f $m.floor_height,$PY); Inputs=@(); Frames=0 }
     }
     Save-MemState -Session $Session -Slot 14 | Out-Null   # Mario standing on the launch platform
 
@@ -1410,7 +1417,7 @@ function Invoke-GrabPlatformStar {
             foreach ($f in $navInputs) { [void]$all.Add($f) }; foreach ($f in $att) { [void]$all.Add($f) }
             return [pscustomobject]@{
                 Grabbed=$true; Found=$true; Name=$star.name; StarsBefore=$s0; StarsAfter=[int]$m.num_stars
-                PlatformY=[math]::Round($PY); Peak=[math]::Round($peak); Reason=("etoile attrapee (backflip depuis plateforme y={0:N0}, settle={1})" -f $PY,$settle)
+                PlatformY=[math]::Round($PY); Peak=[math]::Round($peak); Reason=("star caught (backflip from platform y={0:N0}, settle={1})" -f $PY,$settle)
                 Inputs=$all.ToArray(); Frames=$all.Count
             }
         }
@@ -1418,7 +1425,7 @@ function Invoke-GrabPlatformStar {
     Load-MemState -Session $Session -Slot 15 | Out-Null   # non-destructive on failure
     [pscustomobject]@{
         Grabbed=$false; Found=$true; Name=$star.name; StarsBefore=$s0; StarsAfter=$s0
-        PlatformY=[math]::Round($PY); Reason='backflip depuis la plateforme n a pas attrape (positionnement a affiner). Etat restaure.'
+        PlatformY=[math]::Round($PY); Reason='backflip from the platform did not catch (positioning to refine). State restored.'
         Inputs=@(); Frames=0
     }
 }
@@ -1699,9 +1706,9 @@ function Invoke-OpenChest {
     if ($null -ne $prog0 -and $null -ne $prog1) { $opened = ($prog1 -gt $prog0) } else { $opened = $last.Reached }
     # honest reason so a model doesn't guess (e.g. mistake a blocked path for a "wrong order")
     $dChest = if ($co) { [math]::Sqrt(($last.X-$co.x)*($last.X-$co.x)+($last.Z-$co.z)*($last.Z-$co.z)) } else { $last.Dist }
-    $reason = if ($opened) { 'ouvert' }
-              elseif ($dChest -gt 400) { 'PAS atteint (obstacle/mur sur le chemin ou trop loin) — reessaie open_chest, ou contourne' }
-              else { 'atteint mais pas ouvert (mauvais ordre, ou deja ouvert) — ouvre les coffres dans l ordre 1,2,3,4' }
+    $reason = if ($opened) { 'opened' }
+              elseif ($dChest -gt 400) { 'NOT reached (obstacle/wall on the path or too far) — retry open_chest, or go around' }
+              else { 'reached but not opened (wrong order, or already open) — open the chests in order 1,2,3,4' }
     [pscustomobject]@{
         Chest=$Chest; Opened=$opened; ProgressBefore=$prog0; ProgressAfter=$prog1; Reason=$reason
         X=$last.X; Z=$last.Z; Dist=[math]::Round($dChest,1); Reached=$last.Reached

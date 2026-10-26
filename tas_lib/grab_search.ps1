@@ -1,5 +1,5 @@
-# Recherche de la saisie du Bob-omb depuis c2a_passage.st : marcher vers theta, B a la frame f.
-# Critere : Mario en saisie (0x383) ; on garde la saisie la plus precoce. Arret par lots des le premier succes.
+# Search for the Bob-omb grab from c2a_passage.st: walk toward theta, B at frame f.
+# Criterion: Mario grabbing (0x383); keep the earliest grab. Stop by batches at the first success.
 . "$PSScriptRoot\freerun.ps1"
 $d = if ($env:MOVIE_CHOMP_DIR) { $env:MOVIE_CHOMP_DIR } else { Join-Path $PSScriptRoot '..\MOVIE_CHOMP' }
 Use-Milestone "$d/c2a_passage.st" 27; $cy = CamYaw
@@ -19,9 +19,9 @@ try {
             for ($q = 0; $q -lt $t.Count; $q++) { if ([long]$t[$q][3] -eq 0x383) { $hitF = $q + 1; break } }
             if ($hitF -and (-not $best -or $hitF -lt $best.hit)) { $best = [pscustomobject]@{ hit = $hitF; f = $meta[$i + $k].f; th = $meta[$i + $k].th; frames = $trials[$i + $k] } }
         }
-        Write-Host ("essais {0}..{1} faits ; meilleur : {2}" -f $i, $j, $(if ($best) { "saisie frame $($best.hit) (B f=$($best.f), th=$($best.th))" } else { 'aucun' }))
-        # les f croissent : si on a deja une saisie avant le prochain f teste, inutile de continuer
+        Write-Host ("trials {0}..{1} done ; best: {2}" -f $i, $j, $(if ($best) { "grab frame $($best.hit) (B f=$($best.f), th=$($best.th))" } else { 'none' }))
+        # the f values increase: if we already have a grab before the next f tested, no need to continue
         if ($best -and $meta[[math]::Min($j + 1, $meta.Count - 1)].f -ge $best.hit) { break }
     }
 } finally { Stop-Pool $pool }
-if ($best) { $best | ConvertTo-Json -Depth 4 -Compress | Set-Content "$env:TEMP\grab_best.json"; "MEILLEURE SAISIE : frame $($best.hit), B a f=$($best.f), theta=$($best.th)" } else { "aucune saisie" }
+if ($best) { $best | ConvertTo-Json -Depth 4 -Compress | Set-Content "$env:TEMP\grab_best.json"; "BEST GRAB: frame $($best.hit), B at f=$($best.f), theta=$($best.th)" } else { "no grab" }

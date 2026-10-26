@@ -20,8 +20,8 @@ if "%MODEL_PATH%"=="" (
   )
 )
 
-echo Lancement du modele : %MODEL_PATH% ... interface web : http://localhost:8080
-echo (Laisse cette fenetre ouverte tant que tu utilises le modele)
+echo Starting model: %MODEL_PATH% ... web UI: http://localhost:8080
+echo (Keep this window open while you use the model)
 echo.
 "%LLAMA_SERVER%" ^
   -m "%MODEL_PATH%" ^

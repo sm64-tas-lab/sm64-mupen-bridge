@@ -1,7 +1,7 @@
-﻿# Worker de recherche parallele : lance SON mupen, charge un jalon, rejoue une liste d'essais.
-# Essai = @{ id; n (frames); win = @(@(debut, fin), ...) } : auto-B (0x100) actif sur [debut, fin[ (frames 1-based)
-#         ou @{ id; n; b = @(frames ou B est presse) }.
-# Sortie (jsonl) : id, frames B reellement pressees, changements de yaw (coups), pv, etat final.
+﻿# Parallel search worker: launches ITS OWN mupen, loads a milestone, replays a list of trials.
+# Trial = @{ id; n (frames); win = @(@(start, end), ...) } : auto-B (0x100) active on [start, end[ (1-based frames)
+#         or @{ id; n; b = @(frames where B is pressed) }.
+# Output (jsonl): id, frames where B was actually pressed, yaw changes (hits), HP, final state.
 param([int]$Id, [string]$Milestone, [string]$TrialsFile, [string]$OutFile)
 Import-Module "$PSScriptRoot\..\tas\control\SM64Ctl.psm1" -Force -WarningAction SilentlyContinue
 [System.Threading.Thread]::CurrentThread.CurrentCulture = [cultureinfo]::InvariantCulture
@@ -9,7 +9,7 @@ $s = Start-Mupen -NoSavestate
 try {
     Set-Pause $s -Value $true; Load-State -Session $s -Path $Milestone | Out-Null; Start-Sleep 2; Set-Pause $s -Value $true
     Save-MemState $s -Slot 1 | Out-Null
-    Invoke-MupenLua $s 'REPLAY_SPEED_MODE = 2; return 1' | Out-Null   # replays en ultra fast-forward
+    Invoke-MupenLua $s 'REPLAY_SPEED_MODE = 2; return 1' | Out-Null   # replays at ultra fast-forward
     $trials = Get-Content $TrialsFile -Raw | ConvertFrom-Json
     foreach ($t in $trials) {
         $fr = New-Object 'object[]' ([int]$t.n)

@@ -1,7 +1,7 @@
-# Recherche d'approche SBLJ depuis le slot 10 (Mario a l'arret au pied de l'escalier du hall).
-# Phase 1 : m frames stick vers D1 (perpendiculaire vers la contremarche) ; phase 2 : n frames stick vers F ;
-# puis Z, Z+A (LJ), puis stick arriere (F+32768+th) + Z jusqu'a l'atterrissage du LJ (0x479).
-# Parallele a la marche n1 (x+z = -1950) : yaw -8174.
+# SBLJ approach search from slot 10 (Mario standing still at the foot of the hall staircase).
+# Phase 1: m frames stick toward D1 (perpendicular toward the riser); phase 2: n frames stick toward F;
+# then Z, Z+A (LJ), then back stick (F+32768+th) + Z until the LJ landing (0x479).
+# Parallel to step n1 (x+z = -1950): yaw -8174.
 . "$PSScriptRoot\lib.ps1"
 $script:PAR = -8174
 function ApproachSB([double]$D1, [int]$m, [double]$F, [int]$n, [double]$th, [double]$cy) {
@@ -18,7 +18,7 @@ function ApproachSB([double]$D1, [int]$m, [double]$F, [int]$n, [double]$th, [dou
     [pscustomobject]@{ m = $m; F = $F; n = $n; th = $th; fl = $land.f; v = [math]::Round($land.s.forward_vel, 1); yaw = $land.s.face_yaw
         dyaw = $land.s.face_yaw - $script:PAR; d = [math]::Round((PerpD $land.s), 2); y = $land.s.pos_y; frames = $fr[0..($land.f - 1)] }
 }
-# chaine SBLJ gloutonne depuis un prefixe (slot 10) : cycles (Z+A+cote, Z+cote), garde d proche de DC
+# greedy SBLJ chain from a prefix (slot 10): cycles (Z+A+side, Z+side), keeps d close to DC
 function ChainSB($prefix, [double]$cy, [int]$maxCycles = 10, [double]$DC = 1.5, [double[]]$dirs = @(26000..34000 | ? { $_ % 500 -eq 0 })) {
     $cur = @($prefix); $vs = @()
     for ($c = 0; $c -lt $maxCycles; $c++) {
