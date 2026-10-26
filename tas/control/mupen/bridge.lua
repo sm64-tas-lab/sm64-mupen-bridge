@@ -324,6 +324,9 @@ handlers.savestate = function(a, id)
   -- completion callback fires so the client can safely act on the loaded state right after.
   local jobstr = a.job or "load"
   local ignore = a.ignore ~= false   -- default TRUE: never let a warning dialog block automation
+  if a.clean and jobstr == "save" then
+    pcall(function() movie.stop() end)
+  end
   local cb = function(result, data)
     logline("savestate cb fired: job=" .. jobstr .. " result=" .. tostring(result))
     respond(id, true, { ok = true, result_code = result })

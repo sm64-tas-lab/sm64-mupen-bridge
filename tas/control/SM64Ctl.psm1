@@ -444,9 +444,13 @@ function Invoke-Replay {
 
 # NOTE: mupen slots are 1-based (do_slot subtracts 1). Savestate ops are async; Send-Cmd only
 # returns once the bridge's completion callback fired, so the state is safe to use immediately after.
-function Save-State { param($Session, [int]$Slot = 1, [string]$Path)
-    if ($Path) { Send-Cmd $Session 'savestate' @{ job='save'; path=$Path } | Out-Null }
-    else       { Send-Cmd $Session 'savestate' @{ job='save'; slot=$Slot } | Out-Null } }
+function Save-State { param($Session, [int]$Slot = 1, [string]$Path, [switch]$Clean)
+    $cleanBool = if ($Clean.IsPresent) { $true } elseif ($Path) { $true } else { $false }
+    if ($Path) {
+        $fullPath = [System.IO.Path]::GetFullPath($Path)
+        Send-Cmd $Session 'savestate' @{ job='save'; path=$fullPath; clean=$cleanBool } | Out-Null
+    }
+    else { Send-Cmd $Session 'savestate' @{ job='save'; slot=$Slot; clean=$cleanBool } | Out-Null } }
 function Load-State { param($Session, [int]$Slot = 1, [string]$Path, [int]$TimeoutSec = 30)
     if ($Path) {
         $fullPath = [System.IO.Path]::GetFullPath($Path)
