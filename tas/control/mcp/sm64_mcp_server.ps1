@@ -18,6 +18,7 @@ Import-Module (Join-Path (Split-Path -Parent $here) 'SM64Ctl.psm1') -Force -Warn
 $script:SESS = $null
 $script:RUN_INPUTS = New-Object System.Collections.ArrayList   # every frame's input since start_mupen -> one full-run movie
 $script:MOVIE_SEQ = 0                                           # per-run counter so auto-named movies never collide/overwrite
+$script:MEM_RUN = @{}                                           # memstate slot -> RUN_INPUTS count when it was saved
 function Add-RunInputs($inputs) { foreach ($f in @($inputs)) { [void]$script:RUN_INPUTS.Add($f) } }
 function Log($m) { [Console]::Error.WriteLine("[sm64-mcp] $m") }
 # PS 5.1 has no ?? operator — use this instead of value-coalescing.
@@ -78,6 +79,7 @@ $TOOLS = [ordered]@{
             $p=@{}; if($a.rom){$p.Rom=$a.rom}; if($a.savestate){$p.Savestate=$a.savestate}; if($a.no_savestate){$p.NoSavestate=$true}
             $script:SESS = Start-Mupen @p -ReadyTimeoutSec 60
             $script:RUN_INPUTS = New-Object System.Collections.ArrayList   # fresh run recording
+            $script:MEM_RUN = @{}
             $script:MOVIE_SEQ = 0
             TextResult @{ ok=$true; pid=$script:SESS.Pid; session=$script:SESS.SessionDir }
         }
@@ -94,7 +96,10 @@ $TOOLS = [ordered]@{
     desc='Advance N frames applying a controller input, then return the state reached. Deterministic; core is paused between calls. buttons: {A,B,Z,R,L,start,Cup,Cdown,Cleft,Cright,up,down,left,right (bool), X,Y (int8 stick)}.'
     schema=@{type='object';properties=@{ frames=@{type='integer'}; buttons=@{type='object'} }; required=@('frames') }
     handler={ param($a) $b=@{}; if($a.buttons){ $a.buttons.PSObject.Properties|ForEach-Object{ $b[$_.Name]=$_.Value } }
-              TextResult (Step-Frames $script:SESS -Frames ([int]$a.frames) -Buttons $b) } }
+              $r = Step-Frames $script:SESS -Frames ([int]$a.frames) -Buttons $b
+              $f = @([int](Def $b.X 0), [int](Def $b.Y 0), (ConvertTo-BtnMask $b))
+              for ($i = 0; $i -lt [int]$a.frames; $i++) { [void]$script:RUN_INPUTS.Add($f) }
+              TextResult $r } }
   'read_mem' = @{
     desc='Read a value from N64 RAM at a KSEG0 address (0x80xxxxxx). type in u8,s8,u16,s16,u32,s32,f32,f64.'
     schema=@{type='object';properties=@{ addr=@{type='integer'}; type=@{type='string'} }; required=@('addr') }
@@ -106,11 +111,17 @@ $TOOLS = [ordered]@{
   'save_memstate' = @{
     desc='Save an in-memory savestate checkpoint into a slot (fast, disk-free) for branching/search.'
     schema=@{type='object';properties=@{ slot=@{type='integer'} }}
-    handler={ param($a) TextResult (Save-MemState $script:SESS -Slot ([int](Def $a.slot 1))) } }
+    handler={ param($a) $slot = [int](Def $a.slot 1); $script:MEM_RUN[$slot] = $script:RUN_INPUTS.Count
+              TextResult (Save-MemState $script:SESS -Slot $slot) } }
   'load_memstate' = @{
     desc='Restore an in-memory savestate checkpoint from a slot.'
     schema=@{type='object';properties=@{ slot=@{type='integer'} }}
-    handler={ param($a) TextResult (Load-MemState $script:SESS -Slot ([int](Def $a.slot 1))) } }
+    handler={ param($a) $slot = [int](Def $a.slot 1); $r = Load-MemState $script:SESS -Slot $slot
+              if ($script:MEM_RUN.ContainsKey($slot)) {                # (the run recording follows the game back)
+                  $n = $script:MEM_RUN[$slot]
+                  if ($script:RUN_INPUTS.Count -gt $n) { $script:RUN_INPUTS.RemoveRange($n, $script:RUN_INPUTS.Count - $n) }
+              }
+              TextResult $r } }
   'stroop_vars' = @{
     desc='Compute STROOP variables live from RAM (declarative + common computed). files defaults to MarioData+CameraData.'
     schema=@{type='object';properties=@{ files=@{type='array';items=@{type='string'}}; computed=@{type='boolean'} }}
@@ -278,7 +289,7 @@ $TOOLS = [ordered]@{
     desc='Export ONE replayable .m64 movie of EVERYTHING done since start_mupen (all goto/move/open_chest legs combined, in order), from the loaded savestate. Use this AFTER a multi-step run (e.g. chest 1 then chest 2) to get a single continuous movie instead of one file per leg. Auto-named in tas\movies\ unless out is given.'
     schema=@{type='object';properties=@{ out=@{type='string';description='output .m64 path (optional)'} }}
     handler={ param($a)
-              if(@($script:RUN_INPUTS).Count -eq 0){ TextResult @{ ok=$false; message="Nothing to export: no movement recorded since start_mupen. Do goto/move/open_chest first." } }
+              if(@($script:RUN_INPUTS).Count -eq 0){ TextResult @{ ok=$false; message="Nothing to export: no movement recorded since start_mupen. Play frames first (step_frames, goto, move...)." } }
               else {
                   $mv=Export-GotoMovie $script:RUN_INPUTS.ToArray() (Resolve-MoviePath $a.out 'run_full.m64')
                   TextResult ([ordered]@{ ok=$true; movie=$mv.movie; movie_frames=$mv.movie_frames; movie_st=$mv.movie_st
