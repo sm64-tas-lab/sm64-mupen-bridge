@@ -92,7 +92,7 @@ frames (counted in `atinput`), then re-pauses and replies with the state reached
 frame-stable, and `Load-MemState` + `Step-Frames` replays **bit-identically** (verified).
 
 The **Mario state pack** (`state` / `Get-MarioState`) — US `gMarioState` @ `0x8033B170`:
-`action, prev_action, action_timer, intended_mag/yaw, face_yaw/pitch, slide_yaw, pos_{x,y,z},
+`action, prev_action, action_state, action_timer, intended_mag/yaw, face_yaw/pitch, yaw_vel, water_level, slide_yaw, pos_{x,y,z},
 vel_{x,y,z}, forward_vel, slide_vel_{x,z}, ceil/floor_height, ridden_obj, num_coins/stars, health,
 hurt_counter, invinc_timer, red_coins, hud_coins, course, rng, global_timer, frame`.
 
