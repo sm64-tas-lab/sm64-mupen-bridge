@@ -1615,12 +1615,161 @@ function Invoke-OpenChest {
     }
 }
 
+# the .m64 button word (Export-M64 writes it low byte first): the low byte A B Z start and the D-pad, the high byte
+# the C buttons, R and L
+$script:SM64_BtnBits = [ordered]@{
+    right=0x0001; left=0x0002; down=0x0004; up=0x0008; start=0x0010; Z=0x0020; B=0x0040; A=0x0080
+    Cright=0x0100; Cleft=0x0200; Cdown=0x0400; Cup=0x0800; R=0x1000; L=0x2000
+}
 function ConvertTo-BtnMask {
     param([hashtable]$B)
     $m = 0
-    if ($B.A) { $m = $m -bor 0x80 }; if ($B.B) { $m = $m -bor 0x40 }; if ($B.Z) { $m = $m -bor 0x20 }
-    if ($B.start) { $m = $m -bor 0x10 }; if ($B.R) { $m = $m -bor 0x08 }; if ($B.L) { $m = $m -bor 0x04 }
+    foreach ($k in $script:SM64_BtnBits.Keys) { if ($B[$k]) { $m = $m -bor $script:SM64_BtnBits[$k] } }
     $m
+}
+function ConvertFrom-BtnMask {
+    # a button word (or the headless [x, y, hi, lo] frame's hi + 256 * lo) -> the bridge's input table
+    param([int]$Mask, [int]$X = 0, [int]$Y = 0)
+    $b = @{ X = $X; Y = $Y }
+    foreach ($k in $script:SM64_BtnBits.Keys) { if ($Mask -band $script:SM64_BtnBits[$k]) { $b[$k] = $true } }
+    $b
+}
+
+$script:SM64_Actions = $null
+function Get-ActionName {
+    param([long]$Action)
+    if ($null -eq $script:SM64_Actions) {
+        $script:SM64_Actions = @{}
+        $p = Join-Path $script:ControlDir 'sm64_actions.json'
+        if (Test-Path $p) {
+            (Get-Content $p -Raw | ConvertFrom-Json).actions.PSObject.Properties | ForEach-Object {
+                $script:SM64_Actions[[long]$_.Value] = $_.Name }
+        }
+    }
+    $a = [long]$Action -band 0xFFFFFFFF
+    if ($script:SM64_Actions.ContainsKey($a)) { $script:SM64_Actions[$a] } else { '0x{0:X8}' -f $a }
+}
+
+function Invoke-PlayInputs {
+    <#
+      .SYNOPSIS  Play exact frames in Mupen: a list of [x, y, hi, lo] (the headless engine's inputs) or [x, y, word],
+                 or an .m64's frames (from -FromFrame, -Count of them). The way to replay in the real emulator a line
+                 planned headless with the engine's TAS moves.
+      .OUTPUTS   { Frames, Inputs, State }
+    #>
+    param([Parameter(Mandatory)]$Session, $Frames, [string]$M64, [int]$FromFrame = 0, [int]$Count = -1)
+    $list = New-Object System.Collections.ArrayList
+    if ($M64) {
+        $bytes = [System.IO.File]::ReadAllBytes($M64)
+        $n = [int](($bytes.Length - 1024) / 4)
+        $end = if ($Count -ge 0) { [math]::Min($n, $FromFrame + $Count) } else { $n }
+        for ($i = $FromFrame; $i -lt $end; $i++) {
+            $o = 1024 + 4 * $i
+            $x = [int]$bytes[$o + 2]; if ($x -gt 127) { $x -= 256 }
+            $y = [int]$bytes[$o + 3]; if ($y -gt 127) { $y -= 256 }
+            [void]$list.Add(@($x, $y, ([int]$bytes[$o] + 256 * [int]$bytes[$o + 1])))
+        }
+    } else {
+        foreach ($f in @($Frames)) {
+            $f = @($f)
+            $w = if ($f.Count -ge 4) { [int]$f[2] + 256 * [int]$f[3] } elseif ($f.Count -ge 3) { [int]$f[2] } else { 0 }
+            [void]$list.Add(@([int]$f[0], [int]$f[1], $w))
+        }
+    }
+    $m = $null
+    foreach ($f in $list) { $m = Step-Frames -Session $Session -Frames 1 -Buttons (ConvertFrom-BtnMask $f[2] $f[0] $f[1]) }
+    [pscustomobject]@{ Frames = $list.Count; Inputs = $list.ToArray(); State = $m }
+}
+
+# ---- swimming (the same controller as sm64-tas-cpu headless/swim.py: see its doc for the stroke timings) -------
+function ConvertTo-RawStick([double]$V) {
+    $v = [int][math]::Round([math]::Max(-64.0, [math]::Min(64.0, $V)))
+    if ($v -eq 0) { 0 } elseif ($v -gt 0) { $v + 6 } else { $v - 6 }
+}
+function Get-SwimInput {
+    <#
+      .SYNOPSIS  One frame of the fastest swim toward (Tx, Ty, Tz) from a Mario state pack: A released on the flutter
+                 kick's 1st frame and down on SWIMMING_END's 7th (the swim strength climbs to 280, the speed to 28 u/f),
+                 the stick's x turning Mario, its y his pitch. -Jump: the water jump out (stick pulled back, a new A).
+      .OUTPUTS   @{ X; Y; A }
+    #>
+    param([Parameter(Mandatory)]$M, [double]$Tx, $Ty, [double]$Tz, [bool]$PrevA, [switch]$Jump)
+    $name = Get-ActionName $M.action
+    $t = [int]$M.action_timer
+    $yaw = [int]$M.face_yaw; $yv = [int]$M.yaw_vel
+    $want = [int][math]::Round([math]::Atan2($Tx - [double]$M.pos_x, $Tz - [double]$M.pos_z) * 32768.0 / [math]::PI)
+    $err = (($want - $yaw + 0x8000) -band 0xFFFF) - 0x8000
+    $v = if ([math]::Abs($err) -gt 8) { [math]::Sign($err) * [math]::Min(640.0, [math]::Sqrt(32.0 * [math]::Abs($err))) } else { 0.0 }
+    $sx = -$v / 10.0
+    if ($Jump) { return @{ X = (ConvertTo-RawStick ($sx * 0.3)); Y = -128; A = (-not $PrevA) } }
+    $horiz = [math]::Max(1.0, [math]::Sqrt([math]::Pow($Tx - [double]$M.pos_x, 2) + [math]::Pow($Tz - [double]$M.pos_z, 2)))
+    $pitch = 0
+    if ($null -ne $Ty) {
+        $pitch = [int][math]::Round([math]::Atan2([double]$Ty - [double]$M.pos_y, $horiz) * 32768.0 / [math]::PI)
+        $pitch = [math]::Max(-0x3000, [math]::Min(0x3000, $pitch))
+    }
+    $sy = -$pitch / 252.0
+    $mag = [math]::Sqrt($sx * $sx + $sy * $sy)
+    if ($mag -gt 64.0) { $sx = $sx * 64.0 / $mag; $sy = $sy * 64.0 / $mag }
+    $a = switch -regex ($name) {
+        '^(HOLD_)?BREASTSTROKE$' { $t -lt 13; break }
+        '^(HOLD_)?FLUTTER_KICK$' { $false; break }
+        '^(HOLD_)?SWIMMING_END$' { $t -ge 6; break }
+        '^WATER_PLUNGE$'         { $true; break }
+        default                  { -not $PrevA }
+    }
+    @{ X = (ConvertTo-RawStick $sx); Y = (ConvertTo-RawStick $sy); A = [bool]$a }
+}
+function Test-InWater { param($M) (([long]$M.action -band 0x1C0) -eq 0xC0) }    # the action group SUBMERGED
+function Invoke-Swim {
+    <#
+      .SYNOPSIS  Swim to (TargetX, TargetZ) (TargetY: a depth; none: level) with the fastest strokes, over underwater
+                 walls, out by a water jump when the target is above the water (or -Exit, or the shore blocks Mario at
+                 the surface). Same controller as headless swim.py.
+      .OUTPUTS   { Why (arrived / jumped out / left the water / not in water / max), Frames, Inputs, State }
+    #>
+    param([Parameter(Mandatory)]$Session, [double]$TargetX, [double]$TargetZ, $TargetY = $null,
+          [double]$Stop = 100.0, [int]$MaxFrames = 900, $Exit = $null)
+    $inputs = New-Object System.Collections.ArrayList
+    $m = Get-MarioState $Session
+    if (-not (Test-InWater $m)) { return [pscustomobject]@{ Why = 'not in water'; Frames = 0; Inputs = @(); State = $m } }
+    $prevA = $false; $trail = New-Object System.Collections.ArrayList; $climb = 0; $shore = $false
+    for ($k = 0; $k -lt $MaxFrames; $k++) {
+        if (-not (Test-InWater $m)) {
+            $why = if ((Get-ActionName $m.action) -match 'WATER_JUMP$') { 'jumped out' } else { 'left the water' }
+            return [pscustomobject]@{ Why = $why; Frames = $inputs.Count; Inputs = $inputs.ToArray(); State = $m }
+        }
+        $px = [double]$m.pos_x; $py = [double]$m.pos_y; $pz = [double]$m.pos_z; $wl = [double]$m.water_level
+        $d = [math]::Sqrt([math]::Pow($TargetX - $px, 2) + [math]::Pow($TargetZ - $pz, 2))
+        $up = $shore -or $(if ($null -ne $Exit) { [bool]$Exit } else { ($null -ne $TargetY) -and ([double]$TargetY -gt $wl) })
+        $aimY = if ($up -and $d -lt $Stop + 600.0) { $wl - 40.0 } else { $TargetY }
+        [void]$trail.Add(@($px, $pz, [double]$m.forward_vel))
+        if ($trail.Count -gt 6) {
+            $trail.RemoveAt(0)
+            $moved = [math]::Sqrt([math]::Pow($trail[5][0] - $trail[0][0], 2) + [math]::Pow($trail[5][1] - $trail[0][1], 2))
+            $sum = 0.0; for ($i = 1; $i -lt 6; $i++) { $sum += $trail[$i][2] }
+            if ($moved -lt 0.3 * $sum -and [double]$m.forward_vel -gt 8.0) {
+                $climb = 30
+                if ($py + 1.5 -ge $wl - 80) { $shore = $true; $up = $true; $Stop = [math]::Max($Stop, $d) }
+            }
+        }
+        if ($climb -gt 0) { $climb--; $aimY = $wl - 40.0 }
+        $atTop = ($py + 1.5 -ge $wl - 80) -and ([int]$m.face_pitch -ge 0)
+        if ($up -and $d -le $Stop + 300.0 -and $atTop) {
+            $s = Get-SwimInput -M $m -Tx $TargetX -Ty $null -Tz $TargetZ -PrevA $prevA -Jump
+        } else {
+            $close = ($null -eq $TargetY) -or ([math]::Abs([double]$TargetY - $py) -le $Stop)
+            if (-not $up -and $d -le $Stop -and $close) {
+                return [pscustomobject]@{ Why = 'arrived'; Frames = $inputs.Count; Inputs = $inputs.ToArray(); State = $m }
+            }
+            $s = Get-SwimInput -M $m -Tx $TargetX -Ty $aimY -Tz $TargetZ -PrevA $prevA
+        }
+        $prevA = $s.A
+        $btn = @{ X = $s.X; Y = $s.Y }; if ($s.A) { $btn.A = $true }
+        $m = Step-Frames -Session $Session -Frames 1 -Buttons $btn
+        [void]$inputs.Add(@([int]$s.X, [int]$s.Y, (ConvertTo-BtnMask $btn)))
+    }
+    [pscustomobject]@{ Why = 'max'; Frames = $inputs.Count; Inputs = $inputs.ToArray(); State = $m }
 }
 function Test-Airborne { param($M) ([int]([int64]$M.action -band 0x1C0)) -eq 0x80 }  # SM64 action group AIRBORNE=0x80
 
