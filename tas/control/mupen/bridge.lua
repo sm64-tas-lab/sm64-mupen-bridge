@@ -177,11 +177,14 @@ local function mario_pack()
   return {
     action     = ru(MARIO + 0x0C),
     prev_action= ru(MARIO + 0x10),
-    action_timer = memory.readword(MARIO + 0x16),
+    action_state = memory.readword(MARIO + 0x18),
+    action_timer = memory.readword(MARIO + 0x1A),
     intended_mag = rf(MARIO + 0x20),
     intended_yaw = rw(MARIO + 0x24),
     face_yaw   = rw(MARIO + 0x2E),
     face_pitch = rw(MARIO + 0x2C),
+    yaw_vel    = rw(MARIO + 0x34),
+    water_level = rw(MARIO + 0x76),
     slide_yaw  = rw(MARIO + 0x38),
     pos_x = rf(MARIO + 0x3C), pos_y = rf(MARIO + 0x40), pos_z = rf(MARIO + 0x44),
     vel_x = rf(MARIO + 0x48), vel_y = rf(MARIO + 0x4C), vel_z = rf(MARIO + 0x50),
@@ -299,7 +302,8 @@ handlers.advance = function(a, id)
 end
 
 -- replaylist: apply a per-frame input list [ [x,y,btn], ... ] at MAXIMUM speed in one call.
--- btn is a bitmask (0x80=A, 0x40=B, 0x20=Z, 0x10=Start, 0x08=R, 0x04=L) matching the .m64/CSV convention.
+-- btn is the .m64 button word: 0x80 A, 0x40 B, 0x20 Z, 0x10 Start, 0x08/0x04/0x02/0x01 D-pad up/down/left/right,
+-- 0x0800/0x0400/0x0200/0x0100 C up/down/left/right, 0x1000 R, 0x2000 L; 0x10000 = "auto B" (see atinput).
 -- Returns sampled Mario states: a.samples (list of 1-based frame indices) if given, else only the final
 -- frame. Optional a.stopstars: stop early the first frame num_stars >= that value (returns the stop frame).
 -- Mirrors `advance` timing: the state for frame i is read at the following atinput (after frame i ran),
@@ -493,20 +497,20 @@ emu.atinput(function()
     replay.i = replay.i + 1
     local fr = replay.frames[replay.i]
     local bt = fr[3] or 0
-    -- bit 0x100 = "auto B": B only if Mario is stationary (idle, end of a landing...), outside
+    -- bit 0x10000 = "auto B": B only if Mario is stationary (idle, end of a landing...), outside
     -- punch, and if B was not pressed on the previous frame -> optimal punch rate (1 punch / 16 f)
-    if (math.floor(bt/256) % 2) == 1 then
-      bt = bt % 256
+    if (math.floor(bt/65536) % 2) == 1 then
+      bt = bt % 65536
       local act = memory.readdword(MARIO + 0x0C)
       if act < 0 then act = act + 4294967296 end
       local stationary = (math.floor(act / 0x200) % 2) == 1
       if stationary and act ~= 0x00800380 and not replay.lastB then bt = bt - (bt % 128) + 64 + (bt % 64); replay.autob[#replay.autob+1] = replay.i end
     end
     replay.lastB = (math.floor(bt/64) % 2) == 1
+    local function bit(v) return (math.floor(bt / v) % 2) == 1 end
     local rinp = norm_input({ X = fr[1] or 0, Y = fr[2] or 0,
-      A = (math.floor(bt/128) % 2) == 1, B = (math.floor(bt/64) % 2) == 1,
-      Z = (math.floor(bt/32) % 2) == 1, start = (math.floor(bt/16) % 2) == 1,
-      R = (math.floor(bt/8) % 2) == 1, L = (math.floor(bt/4) % 2) == 1 })
+      right = bit(1), left = bit(2), down = bit(4), up = bit(8), start = bit(16), Z = bit(32), B = bit(64), A = bit(128),
+      Cright = bit(256), Cleft = bit(512), Cdown = bit(1024), Cup = bit(2048), R = bit(4096), L = bit(8192) })
     joypad.set(port, rinp)
     return
   end
