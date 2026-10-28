@@ -20,6 +20,13 @@ $script:RUN_INPUTS = New-Object System.Collections.ArrayList   # every frame's i
 $script:MOVIE_SEQ = 0                                           # per-run counter so auto-named movies never collide/overwrite
 $script:MEM_RUN = @{}                                           # memstate slot -> RUN_INPUTS count when it was saved
 function Add-RunInputs($inputs) { foreach ($f in @($inputs)) { [void]$script:RUN_INPUTS.Add($f) } }
+function Add-StateNames($m) {
+    if ($null -eq $m) { return $m }
+    $m | Add-Member -NotePropertyName action_name -NotePropertyValue (Get-ActionName $m.action) -Force
+    $m | Add-Member -NotePropertyName face_yaw_deg -NotePropertyValue ([math]::Round((([int]$m.face_yaw + 65536) % 65536) * 360.0 / 65536.0, 1)) -Force
+    if ((([long]$m.action) -band 0x1C0) -eq 0xC0) { $m | Add-Member -NotePropertyName in_water -NotePropertyValue $true -Force }
+    $m
+}
 function Log($m) { [Console]::Error.WriteLine("[sm64-mcp] $m") }
 # PS 5.1 has no ?? operator — use this instead of value-coalescing.
 function Def($v, $d) { if ($null -ne $v -and "$v" -ne '') { $v } else { $d } }
@@ -89,9 +96,37 @@ $TOOLS = [ordered]@{
     schema=@{type='object';properties=@{}}
     handler={ param($a) if($script:SESS){ Stop-Mupen $script:SESS; $script:SESS=$null }; TextResult @{ok=$true} } }
   'get_state' = @{
-    desc='Read the full Mario state pack (position, velocity, action, coins, yaw, floor/ceil, timers, rng...).'
+    desc='Read the full Mario state pack: position pos_x/y/z (game units, y up), forward_vel (units a frame; running caps at 32), action + action_name (e.g. LONG_JUMP), action_timer, face_yaw (0..65535 game units) + face_yaw_deg (0 = +z, 90 = +x), water_level + in_water, coins, stars, health, floor/ceil, rng, global_timer (frames).'
     schema=@{type='object';properties=@{}}
-    handler={ param($a) TextResult (Get-MarioState $script:SESS) } }
+    handler={ param($a) TextResult (Add-StateNames (Get-MarioState $script:SESS)) } }
+  'swim' = @{
+    desc='In the water: swim to (x, z) (y: a depth to reach; none: level) with the fastest strokes (A released on the flutter kick''s 1st frame and down on SWIMMING_END''s 7th: the swim strength builds up to the cap of 28 u/f; mashing A is slower), steered every frame (stick x turns, stick y pitches), over underwater walls; out by a water jump when the target is above the water, exit=true, or the shore blocks Mario at the surface. Same controller as the headless sm64-tas-cpu swim. Returns {why: arrived / jumped out / left the water / not in water / max, frames, dist_left, state}; the frames join the run movie.'
+    schema=@{type='object';properties=@{
+        x=@{type='number'}; z=@{type='number'}; y=@{type='number';description='optional depth (world Y) to reach'}
+        stop=@{type='number';description='arrival distance (default 100)'}; frames=@{type='integer';description='frame cap (default 900)'}
+        exit=@{type='boolean';description='true: jump out at the target; false: never'} }; required=@('x','z') }
+    handler={ param($a) $p=@{ TargetX=[double]$a.x; TargetZ=[double]$a.z }
+              if($null -ne $a.y){$p.TargetY=[double]$a.y}; if($null -ne $a.stop){$p.Stop=[double]$a.stop}
+              if($null -ne $a.frames){$p.MaxFrames=[int]$a.frames}; if($null -ne $a.exit){$p.Exit=[bool]$a.exit}
+              $r=Invoke-Swim $script:SESS @p
+              Add-RunInputs $r.Inputs
+              $m=Add-StateNames $(if($r.State){ $r.State } else { Get-MarioState $script:SESS })
+              $d= if($m){ [math]::Round([math]::Sqrt([math]::Pow([double]$a.x-[double]$m.pos_x,2)+[math]::Pow([double]$a.z-[double]$m.pos_z,2)),1) } else { $null }
+              $out=[ordered]@{ why=$r.Why; reached=($r.Why -eq 'arrived'); frames=$r.Frames; dist_left=$d; state=$m }
+              if($r.Why -eq 'not in water'){ $out.hint='Mario is not in the water: goto / move (a jump, a dive) gets him in first' }
+              TextResult $out } }
+  'play_inputs' = @{
+    desc='Play EXACT frames in Mupen from the current state: inputs = [[x, y, hi, lo], ...] (the headless sm64-tas-cpu engine''s frames, e.g. a line planned there with its TAS moves: lj_chain, dive_rollout, swim...) or [[x, y, word], ...]; or m64 = a .m64 path whose frames from_frame (count of them) are played. The real way to get a speedrunner-clean TAS into the emulator: plan headless (fast, every move frame perfect), play here, check with get_state. The frames join the run movie.'
+    schema=@{type='object';properties=@{
+        inputs=@{type='array';items=@{type='array'}}; m64=@{type='string'}
+        from_frame=@{type='integer'}; count=@{type='integer'} } }
+    handler={ param($a) $p=@{}
+              if($a.m64){ $p.M64=[string]$a.m64; if($null -ne $a.from_frame){$p.FromFrame=[int]$a.from_frame}; if($null -ne $a.count){$p.Count=[int]$a.count} }
+              elseif($a.inputs){ $p.Frames=@($a.inputs) }
+              else { throw 'give inputs or m64' }
+              $r=Invoke-PlayInputs $script:SESS @p
+              Add-RunInputs $r.Inputs
+              TextResult ([ordered]@{ ok=$true; frames=$r.Frames; state=(Add-StateNames $r.State) }) } }
   'step_frames' = @{
     desc='Advance N frames applying a controller input, then return the state reached. Deterministic; core is paused between calls. buttons: {A,B,Z,R,L,start,Cup,Cdown,Cleft,Cright,up,down,left,right (bool), X,Y (int8 stick)}.'
     schema=@{type='object';properties=@{ frames=@{type='integer'}; buttons=@{type='object'} }; required=@('frames') }
@@ -207,7 +242,7 @@ $TOOLS = [ordered]@{
                   mario=[ordered]@{ x=[int][math]::Round($m.pos_x); y=[int][math]::Round($m.pos_y); z=[int][math]::Round($m.pos_z); floor=[int]$m.floor_height; ceil=[int]$m.ceil_height; face_yaw=$m.face_yaw; num_stars=$m.num_stars; num_coins=$m.num_coins; red_coins=$m.red_coins }
                   objects=@($objs); walls=@($walls); floors=@($floors) }) } }
   'move' = @{
-    desc='Perform a named SM64 MOVE in a world direction (dir_x,dir_z; default toward -Z). Moves: jump, long_jump, double_jump, triple_jump, backflip, ground_pound, dive, punch. Returns {ok,move,action,x,y,z,frames}; ok=true means the move actually came out (verified by action id). long_jump/dive cover ground fast; backflip/ground_pound gain height. Use between goto legs to clear ledges, gaps or gain reach.'
+    desc='Perform a named SM64 MOVE in a world direction (dir_x,dir_z; default toward -Z). Moves: jump, long_jump, double_jump, triple_jump, backflip, ground_pound, dive, punch. Returns {ok,move,action,x,y,z,frames}; ok=true means the move actually came out (verified by action id). long_jump/dive cover ground fast; backflip/ground_pound gain height. Use between goto legs to clear ledges, gaps or gain reach. These are simple versions with a run-up; for a frame-perfect TAS (lj_chain, dive_rollout, slide kicks, wall kicks, swimming) plan the line in the headless sm64-headless tools and play it here exactly with play_inputs.'
     schema=@{type='object';properties=@{
         move=@{type='string';enum=@('jump','long_jump','double_jump','triple_jump','backflip','ground_pound','dive','punch');description='which move'}
         dir_x=@{type='number';description='world X direction (default 0)'}
