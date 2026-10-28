@@ -110,8 +110,8 @@ $TOOLS = [ordered]@{
               if($null -ne $a.frames){$p.MaxFrames=[int]$a.frames}; if($null -ne $a.exit){$p.Exit=[bool]$a.exit}
               $r=Invoke-Swim $script:SESS @p
               Add-RunInputs $r.Inputs
-              $m=Add-StateNames $r.State
-              $d=[math]::Round([math]::Sqrt([math]::Pow([double]$a.x-[double]$m.pos_x,2)+[math]::Pow([double]$a.z-[double]$m.pos_z,2)),1)
+              $m=Add-StateNames $(if($r.State){ $r.State } else { Get-MarioState $script:SESS })
+              $d= if($m){ [math]::Round([math]::Sqrt([math]::Pow([double]$a.x-[double]$m.pos_x,2)+[math]::Pow([double]$a.z-[double]$m.pos_z,2)),1) } else { $null }
               $out=[ordered]@{ why=$r.Why; reached=($r.Why -eq 'arrived'); frames=$r.Frames; dist_left=$d; state=$m }
               if($r.Why -eq 'not in water'){ $out.hint='Mario is not in the water: goto / move (a jump, a dive) gets him in first' }
               TextResult $out } }

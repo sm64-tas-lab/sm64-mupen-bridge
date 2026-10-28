@@ -422,11 +422,11 @@ function Step-Frames {
     $m
 }
 
-function Invoke-Replay {
+function Invoke-ReplayList {
     <# Batched max-speed replay: apply a whole per-frame input list in ONE bridge call (no per-frame
        IPC round-trip, no id-drift risk). Returns sampled Mario states.
-       -Frames   array of [x,y,btn]; btn is a bitmask 0x80=A 0x40=B 0x20=Z 0x10=Start 0x08=R 0x04=L
-                 (the same convention as the .m64/CSV body, so a task CSV feeds straight in).
+       -Frames   array of [x,y,btn]; btn is the .m64 button word (ConvertTo-BtnMask: 0x80 A, 0x40 B, 0x20 Z,
+                 0x10 Start, D-pad 0x08-0x01, C 0x0800-0x0100, R 0x1000, L 0x2000; 0x10000 = auto B).
        -Samples  1-based frame indices to capture (default: only the final frame).
        -StopStars stop the first frame num_stars >= this and return that frame (great for "when is
                  the star grabbed"). -SampleAll captures every frame (large payload; use sparingly).
@@ -479,7 +479,7 @@ function Load-MemState {
 
 function Search-Rollouts {
     <# Evaluate many candidate input-sequences from ONE checkpoint — the core primitive for TAS search.
-       For each candidate it: loads memstate -Slot, replays the candidate at 5000x (Invoke-Replay),
+       For each candidate it: loads memstate -Slot, replays the candidate at 5000x (Invoke-ReplayList),
        then scores the reached state. Returns one row per candidate {index, score, state, frames},
        sorted best-first (highest score). The emulator is left on the BEST candidate's end state.
 
@@ -488,7 +488,7 @@ function Search-Rollouts {
        -Score       scriptblock given a hashtable {final=<state>, frames=<sampled>, index=<i>}; returns a
                     number (higher = better). Return [double]::NegativeInfinity to REJECT a candidate
                     (e.g. constraint violated: fell off, took damage, wrong facing). Default score = 0.
-       -Samples/-SampleAll  forwarded to Invoke-Replay so -Score can inspect the whole trajectory
+       -Samples/-SampleAll  forwarded to Invoke-ReplayList so -Score can inspect the whole trajectory
                     (e.g. min health, never-left-floor). Default captures only the final frame.
        -Keep        how many top rows to return (default: all). #>
     param($Session, [Parameter(Mandatory)][array]$Candidates, [int]$Slot = 1,
@@ -500,7 +500,7 @@ function Search-Rollouts {
         $rep = @{ Session = $Session; Frames = $Candidates[$i]; TimeoutSec = $TimeoutSec }
         if ($Samples)   { $rep.Samples = $Samples }
         if ($SampleAll) { $rep.SampleAll = $true }
-        $r = Invoke-Replay @rep
+        $r = Invoke-ReplayList @rep
         $final = $r.frames[-1].s
         $sc = 0.0
         if ($Score) { $sc = [double](& $Score @{ final = $final; frames = $r.frames; index = $i }) }
@@ -512,7 +512,7 @@ function Search-Rollouts {
     $best = $sorted | Select-Object -First 1
     if ($best -and $best.score -gt [double]::NegativeInfinity) {
         Load-MemState $Session -Slot $Slot | Out-Null
-        Invoke-Replay -Session $Session -Frames $best.frames -TimeoutSec $TimeoutSec | Out-Null
+        Invoke-ReplayList -Session $Session -Frames $best.frames -TimeoutSec $TimeoutSec | Out-Null
     }
     return $sorted
 }
@@ -760,9 +760,7 @@ function Invoke-Replay {
             $f = $seq[$i]; $n = 1
             while ($i + $n -lt $seq.Count -and (($seq[$i + $n] -join ',') -eq ($f -join ','))) { $n++ }
             $btn = [int]$(if ($f.Count -gt 2) { $f[2] } else { 0 })
-            $b = @{ X = [int]$f[0]; Y = [int]$f[1] }
-            if ($btn -band 0x80) { $b.A = $true }; if ($btn -band 0x40) { $b.B = $true }; if ($btn -band 0x20) { $b.Z = $true }
-            if ($btn -band 0x10) { $b.start = $true }; if ($btn -band 0x08) { $b.R = $true }; if ($btn -band 0x04) { $b.L = $true }
+            $b = ConvertFrom-BtnMask $btn ([int]$f[0]) ([int]$f[1])
             $m = Step-Frames $s -Frames $n -Buttons $b
             $i += $n
         }
@@ -1660,7 +1658,8 @@ function Invoke-PlayInputs {
     param([Parameter(Mandatory)]$Session, $Frames, [string]$M64, [int]$FromFrame = 0, [int]$Count = -1)
     $list = New-Object System.Collections.ArrayList
     if ($M64) {
-        $bytes = [System.IO.File]::ReadAllBytes($M64)
+        if (-not (Test-Path $M64)) { throw "m64 not found: $M64" }
+        $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $M64).Path)   # (.NET resolves against its own cwd)
         $n = [int](($bytes.Length - 1024) / 4)
         $end = if ($Count -ge 0) { [math]::Min($n, $FromFrame + $Count) } else { $n }
         for ($i = $FromFrame; $i -lt $end; $i++) {
@@ -1676,9 +1675,10 @@ function Invoke-PlayInputs {
             [void]$list.Add(@([int]$f[0], [int]$f[1], $w))
         }
     }
-    $m = $null
-    foreach ($f in $list) { $m = Step-Frames -Session $Session -Frames 1 -Buttons (ConvertFrom-BtnMask $f[2] $f[0] $f[1]) }
-    [pscustomobject]@{ Frames = $list.Count; Inputs = $list.ToArray(); State = $m }
+    if ($list.Count -gt 0) {
+        $null = Invoke-ReplayList -Session $Session -Frames $list.ToArray()   # (the whole list in one call, at max speed)
+    }
+    [pscustomobject]@{ Frames = $list.Count; Inputs = $list.ToArray(); State = (Get-MarioState $Session) }
 }
 
 # ---- swimming (the same controller as sm64-tas-cpu headless/swim.py: see its doc for the stroke timings) -------
@@ -1701,7 +1701,7 @@ function Get-SwimInput {
     $err = (($want - $yaw + 0x8000) -band 0xFFFF) - 0x8000
     $v = if ([math]::Abs($err) -gt 8) { [math]::Sign($err) * [math]::Min(640.0, [math]::Sqrt(32.0 * [math]::Abs($err))) } else { 0.0 }
     $sx = -$v / 10.0
-    if ($Jump) { return @{ X = (ConvertTo-RawStick ($sx * 0.3)); Y = -128; A = (-not $PrevA) } }
+    if ($Jump) { return @{ X = (ConvertTo-RawStick ($sx * 0.3)); Y = (ConvertTo-RawStick -64); A = (-not $PrevA) } }
     $horiz = [math]::Max(1.0, [math]::Sqrt([math]::Pow($Tx - [double]$M.pos_x, 2) + [math]::Pow($Tz - [double]$M.pos_z, 2)))
     $pitch = 0
     if ($null -ne $Ty) {
